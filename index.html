@@ -787,9 +787,14 @@ let playerState = {
   currentIndex: 0,
   secondsLeft: 0,
   totalElapsed: 0,
+  completedElapsed: 0,
   playing: false,
   timer: null,
-  wakeLock: null
+  wakeLock: null,
+  intervalStartTime: null,
+  intervalDuration: 0,
+  warned10: false,
+  warned3: false
 };
 let editingSessionId = null;
 let editorIntervals = [];
@@ -996,6 +1001,7 @@ function startSession(id, isPreset) {
   playerState.session = session;
   playerState.currentIndex = 0;
   playerState.totalElapsed = 0;
+  playerState.completedElapsed = 0;
   playerState.playing = false;
 
   loadInterval(0);
@@ -1047,8 +1053,11 @@ function updatePlayerDisplay() {
   bar.style.width = progress + '%';
   bar.style.background = TYPE_COLORS[interval.type];
 
-  const totalMin = Math.floor(playerState.totalElapsed / 60);
-  const totalSec = playerState.totalElapsed % 60;
+  const currentIntervalTotal = playerState.session.intervals[playerState.currentIndex].min * 60;
+  const currentIntervalDone = currentIntervalTotal - playerState.secondsLeft;
+  const totalElapsed = playerState.playing ? calcTotalElapsed() : (playerState.completedElapsed + currentIntervalDone);
+  const totalMin = Math.floor(totalElapsed / 60);
+  const totalSec = Math.floor(totalElapsed % 60);
   const sessionTotal = playerState.session.intervals.reduce((a, i) => a + i.min, 0);
   document.getElementById('player-total').textContent =
     `${totalMin}:${totalSec.toString().padStart(2, '0')} / ${sessionTotal}:00`;
@@ -1081,49 +1090,78 @@ function playerPlay() {
   playerState.playing = true;
   document.getElementById('btn-play').textContent = '⏸';
 
+  // Store real timestamp for this interval
+  playerState.intervalStartTime = Date.now();
+  playerState.intervalDuration = playerState.secondsLeft * 1000;
+  playerState.warned10 = false;
+  playerState.warned3 = false;
+
   // Announce current exercise
   if (settings.voice) speak(playerState.session.intervals[playerState.currentIndex].name);
   if (settings.vibrate) vibrate([200]);
 
-  // Keep audio context alive for background
-  ensureAudioContext();
+  // Start silent audio to prevent Android from suspending
+  startSilentAudio();
 
   playerState.timer = setInterval(() => {
-    playerState.secondsLeft--;
-    playerState.totalElapsed++;
+    const elapsed = Date.now() - playerState.intervalStartTime;
+    const remaining = Math.max(0, playerState.intervalDuration - elapsed);
+    playerState.secondsLeft = Math.ceil(remaining / 1000);
+    playerState.totalElapsed = calcTotalElapsed();
 
     // Warning at 10 seconds
-    if (playerState.secondsLeft === 10 && settings.warning) {
+    if (playerState.secondsLeft <= 10 && playerState.secondsLeft > 3 && !playerState.warned10 && settings.warning) {
+      playerState.warned10 = true;
       if (settings.voice) speak('Diez segundos');
       if (settings.vibrate) vibrate([100, 50, 100]);
     }
 
     // Warning at 3 seconds
-    if (playerState.secondsLeft === 3 && settings.warning) {
+    if (playerState.secondsLeft <= 3 && playerState.secondsLeft > 0 && !playerState.warned3 && settings.warning) {
+      playerState.warned3 = true;
       if (settings.vibrate) vibrate([100]);
     }
 
-    if (playerState.secondsLeft <= 0) {
-      loadInterval(playerState.currentIndex + 1);
-      if (playerState.playing && playerState.currentIndex < playerState.session.intervals.length) {
-        if (settings.voice) speak(playerState.session.intervals[playerState.currentIndex].name);
-        if (settings.vibrate) vibrate([200, 100, 200]);
-      }
+    if (remaining <= 0) {
+      advanceToNext();
     }
 
     updatePlayerDisplay();
-  }, 1000);
+  }, 250); // Check 4x per second for better accuracy
+}
+
+function advanceToNext() {
+  clearInterval(playerState.timer);
+  playerState.completedElapsed += playerState.session.intervals[playerState.currentIndex].min * 60;
+  loadInterval(playerState.currentIndex + 1);
+  if (playerState.playing && playerState.currentIndex < playerState.session.intervals.length) {
+    if (settings.voice) speak(playerState.session.intervals[playerState.currentIndex].name);
+    if (settings.vibrate) vibrate([200, 100, 200]);
+    playerPlay();
+  }
+}
+
+function calcTotalElapsed() {
+  const currentIntervalElapsed = (Date.now() - playerState.intervalStartTime) / 1000;
+  return Math.floor(playerState.completedElapsed + currentIntervalElapsed);
 }
 
 function playerPause() {
   playerState.playing = false;
   document.getElementById('btn-play').textContent = '▶';
   clearInterval(playerState.timer);
+  stopSilentAudio();
+  // Recalculate remaining time based on real elapsed
+  if (playerState.intervalStartTime) {
+    const elapsed = Date.now() - playerState.intervalStartTime;
+    playerState.secondsLeft = Math.max(0, Math.ceil((playerState.intervalDuration - elapsed) / 1000));
+  }
 }
 
 function playerNext() {
   clearInterval(playerState.timer);
-  playerState.totalElapsed += playerState.secondsLeft;
+  stopSilentAudio();
+  playerState.completedElapsed += playerState.session.intervals[playerState.currentIndex].min * 60;
   loadInterval(playerState.currentIndex + 1);
   if (playerState.playing && playerState.currentIndex < playerState.session.intervals.length) {
     playerPlay();
@@ -1132,7 +1170,10 @@ function playerNext() {
 
 function playerPrev() {
   clearInterval(playerState.timer);
-  playerState.totalElapsed = Math.max(0, playerState.totalElapsed - (playerState.session.intervals[playerState.currentIndex].min * 60 - playerState.secondsLeft));
+  stopSilentAudio();
+  if (playerState.currentIndex > 0) {
+    playerState.completedElapsed = Math.max(0, playerState.completedElapsed - playerState.session.intervals[playerState.currentIndex - 1].min * 60);
+  }
   const prevIdx = Math.max(0, playerState.currentIndex - 1);
   loadInterval(prevIdx);
   if (playerState.playing) playerPlay();
@@ -1140,17 +1181,20 @@ function playerPrev() {
 
 function stopPlayer() {
   playerPause();
+  stopSilentAudio();
   releaseWakeLock();
   showScreen('list');
 }
 
 function finishSession() {
   playerPause();
+  stopSilentAudio();
   releaseWakeLock();
 
   const session = playerState.session;
-  const totalMin = Math.floor(playerState.totalElapsed / 60);
-  const totalSec = playerState.totalElapsed % 60;
+  const totalSecs = session.intervals.reduce((a, i) => a + i.min * 60, 0);
+  const totalMin = Math.floor(totalSecs / 60);
+  const totalSec = Math.round(totalSecs % 60);
 
   document.getElementById('finished-name').textContent = session.name;
   document.getElementById('finished-time').textContent =
@@ -1201,15 +1245,85 @@ function releaseWakeLock() {
   } catch(e) {}
 }
 
-// ── AUDIO CONTEXT (keep alive in background) ──
-let audioCtx = null;
-function ensureAudioContext() {
-  if (!audioCtx) {
-    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+// ── SILENT AUDIO (keeps Android from suspending the page) ──
+let silentAudioCtx = null;
+let silentSource = null;
+
+function startSilentAudio() {
+  try {
+    if (!silentAudioCtx) {
+      silentAudioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    }
+    if (silentAudioCtx.state === 'suspended') silentAudioCtx.resume();
+
+    // Create a silent buffer that loops
+    const buffer = silentAudioCtx.createBuffer(1, silentAudioCtx.sampleRate * 2, silentAudioCtx.sampleRate);
+    // Fill with near-silence (tiny values to keep audio stream alive)
+    const data = buffer.getChannelData(0);
+    for (let i = 0; i < data.length; i++) {
+      data[i] = 0.00001;
+    }
+
+    if (silentSource) {
+      try { silentSource.stop(); } catch(e) {}
+    }
+    silentSource = silentAudioCtx.createBufferSource();
+    silentSource.buffer = buffer;
+    silentSource.loop = true;
+    silentSource.connect(silentAudioCtx.destination);
+    silentSource.start();
+  } catch(e) {
+    console.log('Silent audio failed:', e);
   }
-  // Create silent oscillator to keep audio thread alive
-  if (audioCtx.state === 'suspended') audioCtx.resume();
 }
+
+function stopSilentAudio() {
+  try {
+    if (silentSource) {
+      silentSource.stop();
+      silentSource = null;
+    }
+  } catch(e) {}
+}
+
+// ── VISIBILITY CHANGE (recalculate on return) ──
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible' && playerState.playing) {
+    // Force immediate recalculation
+    const elapsed = Date.now() - playerState.intervalStartTime;
+    const remaining = playerState.intervalDuration - elapsed;
+
+    if (remaining <= 0) {
+      // We've passed one or more intervals while in background
+      let overflow = -remaining;
+      let idx = playerState.currentIndex + 1;
+      playerState.completedElapsed += playerState.session.intervals[playerState.currentIndex].min * 60;
+
+      // Skip through completed intervals
+      while (idx < playerState.session.intervals.length) {
+        const intervalMs = playerState.session.intervals[idx].min * 60 * 1000;
+        if (overflow < intervalMs) {
+          // We're in this interval
+          clearInterval(playerState.timer);
+          loadInterval(idx);
+          playerState.completedElapsed += Math.floor(overflow / 1000);
+          playerState.secondsLeft = Math.ceil((intervalMs - overflow) / 1000);
+          playerState.intervalStartTime = Date.now() - overflow;
+          playerState.intervalDuration = intervalMs;
+          playerPlay();
+          return;
+        }
+        overflow -= intervalMs;
+        playerState.completedElapsed += playerState.session.intervals[idx].min * 60;
+        idx++;
+      }
+      // All intervals completed
+      finishSession();
+    }
+    // Re-request wake lock (Android releases it on screen off)
+    if (settings.wakelock) requestWakeLock();
+  }
+});
 
 // ── SETTINGS ──
 function openSettings() {
