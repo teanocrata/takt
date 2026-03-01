@@ -664,6 +664,20 @@ const QUICK_INTERVALS = [
 
 const PRESET_SESSIONS = [
   {
+    id: 'test-rapido',
+    name: '🧪 Test rápido',
+    desc: 'Intervalos de 30s para probar voz y vibración.',
+    preset: true,
+    intervals: [
+      { name: 'Paso calentamiento', min: 0.5, type: 'paso' },
+      { name: 'Trote de trabajo', min: 0.5, type: 'trote' },
+      { name: 'Espaldas adentro', min: 0.5, type: 'lateral' },
+      { name: 'Galope', min: 0.5, type: 'galope' },
+      { name: 'Cruzadas', min: 0.5, type: 'salto' },
+      { name: 'Descanso al paso', min: 0.5, type: 'descanso' },
+    ]
+  },
+  {
     id: 'sem1-cuerda',
     name: 'Sem 1-2 · Cuerda',
     desc: 'Base aeróbica. Paso y trote, poco galope.',
