@@ -1096,47 +1096,35 @@ function playerPlay() {
   playerState.warned10 = false;
   playerState.warned3 = false;
 
+  const currentInterval = playerState.session.intervals[playerState.currentIndex];
+
   // Announce current exercise
-  if (settings.voice) speak(playerState.session.intervals[playerState.currentIndex].name);
+  if (settings.voice) speak(currentInterval.name);
   if (settings.vibrate) vibrate([200]);
+
+  // Notification + media session for lock screen
+  notifyIntervalChange(currentInterval.name);
+  updateMediaSession(currentInterval.name, playerState.session.name);
+  requestNotificationPermission();
 
   // Start silent audio to prevent Android from suspending
   startSilentAudio();
 
-  playerState.timer = setInterval(() => {
-    const elapsed = Date.now() - playerState.intervalStartTime;
-    const remaining = Math.max(0, playerState.intervalDuration - elapsed);
-    playerState.secondsLeft = Math.ceil(remaining / 1000);
-    playerState.totalElapsed = calcTotalElapsed();
-
-    // Warning at 10 seconds
-    if (playerState.secondsLeft <= 10 && playerState.secondsLeft > 3 && !playerState.warned10 && settings.warning) {
-      playerState.warned10 = true;
-      if (settings.voice) speak('Diez segundos');
-      if (settings.vibrate) vibrate([100, 50, 100]);
-    }
-
-    // Warning at 3 seconds
-    if (playerState.secondsLeft <= 3 && playerState.secondsLeft > 0 && !playerState.warned3 && settings.warning) {
-      playerState.warned3 = true;
-      if (settings.vibrate) vibrate([100]);
-    }
-
-    if (remaining <= 0) {
-      advanceToNext();
-    }
-
-    updatePlayerDisplay();
-  }, 250); // Check 4x per second for better accuracy
+  // Use Web Worker for timer ticks
+  const worker = getTimerWorker();
+  worker.postMessage('start');
 }
 
 function advanceToNext() {
-  clearInterval(playerState.timer);
+  getTimerWorker().postMessage('stop');
   playerState.completedElapsed += playerState.session.intervals[playerState.currentIndex].min * 60;
   loadInterval(playerState.currentIndex + 1);
   if (playerState.playing && playerState.currentIndex < playerState.session.intervals.length) {
-    if (settings.voice) speak(playerState.session.intervals[playerState.currentIndex].name);
+    const nextInterval = playerState.session.intervals[playerState.currentIndex];
+    if (settings.voice) speak(nextInterval.name);
     if (settings.vibrate) vibrate([200, 100, 200]);
+    notifyIntervalChange(nextInterval.name);
+    updateMediaSession(nextInterval.name, playerState.session.name);
     playerPlay();
   }
 }
@@ -1149,7 +1137,7 @@ function calcTotalElapsed() {
 function playerPause() {
   playerState.playing = false;
   document.getElementById('btn-play').textContent = '▶';
-  clearInterval(playerState.timer);
+  getTimerWorker().postMessage('stop');
   stopSilentAudio();
   // Recalculate remaining time based on real elapsed
   if (playerState.intervalStartTime) {
@@ -1159,7 +1147,7 @@ function playerPause() {
 }
 
 function playerNext() {
-  clearInterval(playerState.timer);
+  getTimerWorker().postMessage('stop');
   stopSilentAudio();
   playerState.completedElapsed += playerState.session.intervals[playerState.currentIndex].min * 60;
   loadInterval(playerState.currentIndex + 1);
@@ -1169,7 +1157,7 @@ function playerNext() {
 }
 
 function playerPrev() {
-  clearInterval(playerState.timer);
+  getTimerWorker().postMessage('stop');
   stopSilentAudio();
   if (playerState.currentIndex > 0) {
     playerState.completedElapsed = Math.max(0, playerState.completedElapsed - playerState.session.intervals[playerState.currentIndex - 1].min * 60);
@@ -1245,43 +1233,159 @@ function releaseWakeLock() {
   } catch(e) {}
 }
 
-// ── SILENT AUDIO (keeps Android from suspending the page) ──
-let silentAudioCtx = null;
-let silentSource = null;
+// ── SILENT AUDIO (real <audio> element - Android keeps process alive for media) ──
+let silentAudio = null;
 
 function startSilentAudio() {
   try {
-    if (!silentAudioCtx) {
-      silentAudioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    if (!silentAudio) {
+      // Generate a tiny WAV file (1 second, near-silent) as data URI
+      silentAudio = document.createElement('audio');
+      silentAudio.loop = true;
+      silentAudio.volume = 0.01;
+      // Minimal WAV: 1s mono 8kHz 8bit
+      const sampleRate = 8000;
+      const duration = 1;
+      const numSamples = sampleRate * duration;
+      const headerSize = 44;
+      const dataSize = numSamples;
+      const buffer = new ArrayBuffer(headerSize + dataSize);
+      const view = new DataView(buffer);
+      // RIFF header
+      writeString(view, 0, 'RIFF');
+      view.setUint32(4, 36 + dataSize, true);
+      writeString(view, 8, 'WAVE');
+      writeString(view, 12, 'fmt ');
+      view.setUint32(16, 16, true); // chunk size
+      view.setUint16(20, 1, true); // PCM
+      view.setUint16(22, 1, true); // mono
+      view.setUint32(24, sampleRate, true);
+      view.setUint32(28, sampleRate, true); // byte rate
+      view.setUint16(32, 1, true); // block align
+      view.setUint16(34, 8, true); // bits per sample
+      writeString(view, 36, 'data');
+      view.setUint32(40, dataSize, true);
+      // Fill with silence (128 = silence for 8-bit)
+      for (let i = 0; i < numSamples; i++) {
+        view.setUint8(headerSize + i, 128);
+      }
+      const blob = new Blob([buffer], { type: 'audio/wav' });
+      silentAudio.src = URL.createObjectURL(blob);
     }
-    if (silentAudioCtx.state === 'suspended') silentAudioCtx.resume();
-
-    // Create a silent buffer that loops
-    const buffer = silentAudioCtx.createBuffer(1, silentAudioCtx.sampleRate * 2, silentAudioCtx.sampleRate);
-    // Fill with near-silence (tiny values to keep audio stream alive)
-    const data = buffer.getChannelData(0);
-    for (let i = 0; i < data.length; i++) {
-      data[i] = 0.00001;
-    }
-
-    if (silentSource) {
-      try { silentSource.stop(); } catch(e) {}
-    }
-    silentSource = silentAudioCtx.createBufferSource();
-    silentSource.buffer = buffer;
-    silentSource.loop = true;
-    silentSource.connect(silentAudioCtx.destination);
-    silentSource.start();
+    silentAudio.play().catch(e => console.log('Silent audio play failed:', e));
   } catch(e) {
-    console.log('Silent audio failed:', e);
+    console.log('Silent audio setup failed:', e);
+  }
+}
+
+function writeString(view, offset, str) {
+  for (let i = 0; i < str.length; i++) {
+    view.setUint8(offset + i, str.charCodeAt(i));
   }
 }
 
 function stopSilentAudio() {
   try {
-    if (silentSource) {
-      silentSource.stop();
-      silentSource = null;
+    if (silentAudio) {
+      silentAudio.pause();
+    }
+  } catch(e) {}
+}
+
+// ── WEB WORKER (runs timer in separate thread, less throttled) ──
+let timerWorker = null;
+
+function createTimerWorker() {
+  const workerCode = `
+    let timer = null;
+    self.onmessage = function(e) {
+      if (e.data === 'start') {
+        if (timer) clearInterval(timer);
+        timer = setInterval(() => self.postMessage('tick'), 250);
+      } else if (e.data === 'stop') {
+        if (timer) clearInterval(timer);
+        timer = null;
+      }
+    };
+  `;
+  const blob = new Blob([workerCode], { type: 'application/javascript' });
+  const worker = new Worker(URL.createObjectURL(blob));
+  return worker;
+}
+
+function getTimerWorker() {
+  if (!timerWorker) {
+    timerWorker = createTimerWorker();
+    timerWorker.onmessage = function() {
+      if (!playerState.playing) return;
+      timerTick();
+    };
+  }
+  return timerWorker;
+}
+
+function timerTick() {
+  const elapsed = Date.now() - playerState.intervalStartTime;
+  const remaining = Math.max(0, playerState.intervalDuration - elapsed);
+  playerState.secondsLeft = Math.ceil(remaining / 1000);
+  playerState.totalElapsed = calcTotalElapsed();
+
+  // Warning at 10 seconds
+  if (playerState.secondsLeft <= 10 && playerState.secondsLeft > 3 && !playerState.warned10 && settings.warning) {
+    playerState.warned10 = true;
+    if (settings.voice) speak('Diez segundos');
+    if (settings.vibrate) vibrate([100, 50, 100]);
+  }
+
+  // Warning at 3 seconds
+  if (playerState.secondsLeft <= 3 && playerState.secondsLeft > 0 && !playerState.warned3 && settings.warning) {
+    playerState.warned3 = true;
+    if (settings.vibrate) vibrate([100]);
+  }
+
+  if (remaining <= 0) {
+    advanceToNext();
+  }
+
+  updatePlayerDisplay();
+}
+
+// ── NOTIFICATIONS (work even when page is suspended) ──
+async function requestNotificationPermission() {
+  if ('Notification' in window && Notification.permission === 'default') {
+    await Notification.requestPermission();
+  }
+}
+
+function notifyIntervalChange(name) {
+  try {
+    if ('Notification' in window && Notification.permission === 'granted') {
+      new Notification('Takt', {
+        body: name,
+        tag: 'takt-interval',
+        renotify: true,
+        vibrate: [200, 100, 200],
+        silent: false
+      });
+    }
+  } catch(e) {}
+}
+
+// ── MEDIA SESSION (shows in notification bar / lock screen) ──
+function updateMediaSession(exerciseName, sessionName) {
+  try {
+    if ('mediaSession' in navigator) {
+      navigator.mediaSession.metadata = new MediaMetadata({
+        title: exerciseName,
+        artist: 'Takt',
+        album: sessionName
+      });
+      navigator.mediaSession.playbackState = 'playing';
+
+      navigator.mediaSession.setActionHandler('play', () => playerToggle());
+      navigator.mediaSession.setActionHandler('pause', () => playerToggle());
+      navigator.mediaSession.setActionHandler('nexttrack', () => playerNext());
+      navigator.mediaSession.setActionHandler('previoustrack', () => playerPrev());
     }
   } catch(e) {}
 }
@@ -1303,24 +1407,21 @@ document.addEventListener('visibilitychange', () => {
       while (idx < playerState.session.intervals.length) {
         const intervalMs = playerState.session.intervals[idx].min * 60 * 1000;
         if (overflow < intervalMs) {
-          // We're in this interval
-          clearInterval(playerState.timer);
           loadInterval(idx);
-          playerState.completedElapsed += Math.floor(overflow / 1000);
           playerState.secondsLeft = Math.ceil((intervalMs - overflow) / 1000);
           playerState.intervalStartTime = Date.now() - overflow;
           playerState.intervalDuration = intervalMs;
-          playerPlay();
+          if (settings.voice) speak(playerState.session.intervals[idx].name);
+          updatePlayerDisplay();
           return;
         }
         overflow -= intervalMs;
         playerState.completedElapsed += playerState.session.intervals[idx].min * 60;
         idx++;
       }
-      // All intervals completed
       finishSession();
     }
-    // Re-request wake lock (Android releases it on screen off)
+    // Re-request wake lock
     if (settings.wakelock) requestWakeLock();
   }
 });
@@ -1353,6 +1454,11 @@ function updateSettingToggles() {
     const el = document.getElementById(`toggle-${key}`);
     if (el) el.classList.toggle('on', settings[key]);
   }
+}
+
+// ── SERVICE WORKER ──
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.register('./sw.js').catch(e => console.log('SW register failed:', e));
 }
 
 // ── START ──
