@@ -13,6 +13,7 @@ export function useBackgroundAudio() {
       await setAudioModeAsync({
         playsInSilentMode: true,
         shouldPlayInBackground: true,
+        interruptionMode: 'duckOthers',
       });
       player.loop = true;
       // Low but not near-zero — Android may kill audio services with very low volume
