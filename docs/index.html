@@ -1239,14 +1239,13 @@ let silentAudio = null;
 function startSilentAudio() {
   try {
     if (!silentAudio) {
-      // Generate a near-silent WAV (not true silence — Android detects
-      // zero-energy audio and suspends the process anyway)
+      // DEBUG: audible beep every 3s to test if audio survives screen off
       silentAudio = document.createElement('audio');
       silentAudio.loop = true;
-      silentAudio.volume = 0.05;
-      // 2s mono 16-bit 44100Hz WAV
+      silentAudio.volume = 0.5;
+      // 3s mono 16-bit 44100Hz WAV with 80ms 880Hz beep at start
       const sampleRate = 44100;
-      const duration = 2;
+      const duration = 3;
       const numSamples = sampleRate * duration;
       const bytesPerSample = 2;
       const headerSize = 44;
@@ -1267,9 +1266,16 @@ function startSilentAudio() {
       view.setUint16(34, 16, true); // 16 bits per sample
       writeString(view, 36, 'data');
       view.setUint32(40, dataSize, true);
-      // Near-silent signal: alternating +1/-1 (inaudible but not zero)
       for (let i = 0; i < numSamples; i++) {
-        view.setInt16(headerSize + i * bytesPerSample, i % 2 === 0 ? 1 : -1, true);
+        const t = i / sampleRate;
+        let value;
+        if (t < 0.08) {
+          // 80ms sine beep at 880Hz
+          value = Math.round(3000 * Math.sin(2 * Math.PI * 880 * t));
+        } else {
+          value = i % 2 === 0 ? 1 : -1;
+        }
+        view.setInt16(headerSize + i * bytesPerSample, value, true);
       }
       const blob = new Blob([buffer], { type: 'audio/wav' });
       silentAudio.src = URL.createObjectURL(blob);

@@ -1,7 +1,8 @@
 import { useRef, useCallback } from 'react';
 import { useAudioPlayer, setAudioModeAsync } from 'expo-audio';
 
-const silenceSource = require('../../assets/silence.wav');
+// DEBUG: audible beep every 3s to test background audio
+const silenceSource = require('../../assets/beep-debug.wav');
 
 export function useBackgroundAudio() {
   const player = useAudioPlayer(silenceSource);
@@ -17,7 +18,7 @@ export function useBackgroundAudio() {
       });
       player.loop = true;
       // Low but not near-zero — Android may kill audio services with very low volume
-      player.volume = 0.05;
+      player.volume = 0.5; // DEBUG: audible volume
       player.play();
       isActive.current = true;
     } catch (e) {
