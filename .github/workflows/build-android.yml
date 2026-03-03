@@ -25,6 +25,13 @@ jobs:
           distribution: temurin
           java-version: 17
 
+      - name: Stamp build hash
+        run: |
+          SHORT_SHA=${GITHUB_SHA::7}
+          sed -i "s/BUILD = 'dev'/BUILD = '${SHORT_SHA}'/" src/constants/version.js
+          sed -i "s/PWA_BUILD = 'dev'/PWA_BUILD = '${SHORT_SHA}'/" docs/index.html
+          cat src/constants/version.js
+
       - name: Install dependencies
         run: npm ci --legacy-peer-deps
 

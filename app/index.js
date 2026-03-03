@@ -4,6 +4,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useSessions } from '../src/context/SessionContext';
 import SessionCard from '../src/components/SessionCard';
 import { colors, fonts, spacing, radius } from '../src/constants/theme';
+import { VERSION_DISPLAY } from '../src/constants/version';
 
 export default function SessionListScreen() {
   const router = useRouter();
@@ -71,6 +72,9 @@ export default function SessionListScreen() {
             />
           ))
         )}
+
+        {/* Version */}
+        <Text style={styles.version}>{VERSION_DISPLAY}</Text>
 
         {/* Spacer for button */}
         <View style={{ height: 80 }} />
@@ -145,6 +149,14 @@ const styles = StyleSheet.create({
     fontFamily: fonts.sans,
     fontSize: 14,
     color: colors.textMuted,
+  },
+  version: {
+    fontFamily: fonts.mono,
+    fontSize: 11,
+    color: colors.textMuted,
+    textAlign: 'center',
+    marginTop: spacing.xxl,
+    opacity: 0.6,
   },
   bottomBar: {
     position: 'absolute',

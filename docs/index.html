@@ -518,6 +518,7 @@
   <button class="btn btn-primary btn-block" onclick="showEditor()" style="margin-top:16px">
     + Nueva sesión
   </button>
+  <div id="pwa-version" style="text-align:center;font-family:'DM Mono',monospace;font-size:11px;color:var(--text-muted);opacity:0.6;margin-top:24px;padding-bottom:16px"></div>
 </div>
 
 <!-- SCREEN: Player -->
@@ -638,6 +639,9 @@
 </div>
 
 <script>
+// ── VERSION ──
+const PWA_VERSION = '0.1.0';
+
 // ── DATA ──
 const TYPE_COLORS = {
   paso: '#5b8a72',
@@ -839,6 +843,7 @@ function renderSessionList() {
   customEl.innerHTML = customSessions.length
     ? customSessions.map(s => renderSessionCard(s, true)).join('')
     : '<p style="color:var(--text-muted);font-size:14px;">Aún no has creado sesiones propias</p>';
+  document.getElementById('pwa-version').textContent = `v${PWA_VERSION}`;
 }
 
 function renderSessionCard(session, editable = false) {
