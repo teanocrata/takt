@@ -500,6 +500,19 @@
     border-color: var(--accent);
     color: var(--text);
   }
+
+  .tts-spinner {
+    display: inline-block;
+    width: 14px;
+    height: 14px;
+    border: 2px solid var(--text-muted);
+    border-top-color: var(--accent);
+    border-radius: 50%;
+    animation: tts-spin 0.8s linear infinite;
+  }
+  @keyframes tts-spin {
+    to { transform: rotate(360deg); }
+  }
 </style>
 </head>
 <body>
@@ -540,6 +553,9 @@
       <button class="player-btn" onclick="playerNext()" title="Siguiente">⏭</button>
     </div>
     <button class="btn" style="margin-top:24px" onclick="stopPlayer()">✕ Terminar</button>
+    <div id="tts-loading" style="display:none;align-items:center;justify-content:center;gap:8px;margin-top:16px;color:var(--text-muted);font-size:14px;">
+      <span class="tts-spinner"></span> Preparando voz...
+    </div>
   </div>
 </div>
 
@@ -785,6 +801,12 @@ let settings = {
   wakelock: true
 };
 
+// ── EDGE TTS ──
+const TTS_WORKER_URL = 'https://takt-tts.teanocrata.workers.dev';
+const TTS_VOICE = 'es-ES-ElviraNeural';
+let ttsCache = {};   // { "Paso calentamiento": Blob, ... }
+let ttsReady = false;
+
 let customSessions = [];
 let playerState = {
   session: null,
@@ -997,7 +1019,7 @@ function deleteSession(id) {
 }
 
 // ── PLAYER ──
-function startSession(id, isPreset) {
+async function startSession(id, isPreset) {
   const session = isPreset
     ? PRESET_SESSIONS.find(s => s.id === id)
     : customSessions.find(s => s.id === id);
@@ -1015,6 +1037,9 @@ function startSession(id, isPreset) {
   document.getElementById('player-session-title').textContent = session.name;
 
   if (settings.wakelock) requestWakeLock();
+
+  // Pre-generate TTS audio (runs in parallel, shows loading indicator)
+  await preGenerateTTS(session);
 
   // Auto-start
   playerToggle();
@@ -1194,7 +1219,7 @@ function finishSession() {
     `${totalMin}:${totalSec.toString().padStart(2, '0')}`;
   document.getElementById('finished-intervals').textContent = session.intervals.length;
 
-  if (settings.voice) speak('¡Sesión completada! Buen trabajo.');
+  if (settings.voice) speak('Sesión completada. Buen trabajo.');
   if (settings.vibrate) vibrate([200, 100, 200, 100, 200]);
 
   showScreen('finished');
@@ -1247,10 +1272,55 @@ function playAlertSound() {
 }
 
 // ── TTS ──
+async function preGenerateTTS(session) {
+  ttsReady = false;
+  ttsCache = {};
+
+  // Collect unique texts to generate
+  const texts = new Set();
+  for (const interval of session.intervals) {
+    texts.add(interval.name);
+  }
+  texts.add('Diez segundos');
+  texts.add('Sesión completada. Buen trabajo.');
+
+  const indicator = document.getElementById('tts-loading');
+  if (indicator) indicator.style.display = 'flex';
+
+  const fetches = [...texts].map(async (text) => {
+    try {
+      const res = await fetch(TTS_WORKER_URL + '/tts', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text, voice: TTS_VOICE }),
+      });
+      if (res.ok) {
+        ttsCache[text] = await res.blob();
+      }
+    } catch (e) {
+      console.warn('TTS pre-gen failed for:', text, e);
+    }
+  });
+
+  await Promise.all(fetches);
+  ttsReady = Object.keys(ttsCache).length > 0;
+
+  if (indicator) indicator.style.display = 'none';
+}
+
 function speak(text) {
-  // Always play the alert beep (works in background)
+  // Try Edge TTS cached audio first (works in background)
+  const blob = ttsCache[text];
+  if (blob) {
+    const url = URL.createObjectURL(blob);
+    const audio = new Audio(url);
+    audio.volume = 1.0;
+    audio.play().catch(() => {});
+    audio.onended = () => URL.revokeObjectURL(url);
+    return;
+  }
+  // Fallback: alert beep + speechSynthesis (foreground only)
   playAlertSound();
-  // Also try TTS (only works in foreground on Android)
   try {
     const synth = window.speechSynthesis;
     synth.cancel();
