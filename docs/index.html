@@ -1195,8 +1195,57 @@ function finishSession() {
   showScreen('finished');
 }
 
+// ── ALERT SOUND (works in background via <audio> element) ──
+let alertAudio = null;
+
+function createAlertSound() {
+  // Generate a distinct alert tone: two-tone beep (600Hz + 900Hz)
+  const sampleRate = 44100;
+  const bytesPerSample = 2;
+  const headerSize = 44;
+  // 300ms total: 150ms at 600Hz + 150ms at 900Hz
+  const numSamples = Math.round(sampleRate * 0.3);
+  const dataSize = numSamples * bytesPerSample;
+  const buffer = new ArrayBuffer(headerSize + dataSize);
+  const view = new DataView(buffer);
+  writeString(view, 0, 'RIFF');
+  view.setUint32(4, 36 + dataSize, true);
+  writeString(view, 8, 'WAVE');
+  writeString(view, 12, 'fmt ');
+  view.setUint32(16, 16, true);
+  view.setUint16(20, 1, true);
+  view.setUint16(22, 1, true);
+  view.setUint32(24, sampleRate, true);
+  view.setUint32(28, sampleRate * bytesPerSample, true);
+  view.setUint16(32, bytesPerSample, true);
+  view.setUint16(34, 16, true);
+  writeString(view, 36, 'data');
+  view.setUint32(40, dataSize, true);
+  for (let i = 0; i < numSamples; i++) {
+    const t = i / sampleRate;
+    const freq = t < 0.15 ? 600 : 900;
+    const value = Math.round(6000 * Math.sin(2 * Math.PI * freq * t));
+    view.setInt16(headerSize + i * bytesPerSample, value, true);
+  }
+  const blob = new Blob([buffer], { type: 'audio/wav' });
+  alertAudio = document.createElement('audio');
+  alertAudio.src = URL.createObjectURL(blob);
+  alertAudio.volume = 1;
+}
+
+function playAlertSound() {
+  try {
+    if (!alertAudio) createAlertSound();
+    alertAudio.currentTime = 0;
+    alertAudio.play().catch(() => {});
+  } catch(e) {}
+}
+
 // ── TTS ──
 function speak(text) {
+  // Always play the alert beep (works in background)
+  playAlertSound();
+  // Also try TTS (only works in foreground on Android)
   try {
     const synth = window.speechSynthesis;
     synth.cancel();
@@ -1233,56 +1282,46 @@ function releaseWakeLock() {
   } catch(e) {}
 }
 
-// ── SILENT AUDIO (real <audio> element - Android keeps process alive for media) ──
+// ── KEEPALIVE AUDIO (near-silent loop to prevent Android from suspending) ──
 let silentAudio = null;
 
 function startSilentAudio() {
   try {
     if (!silentAudio) {
-      // DEBUG: audible beep every 3s to test if audio survives screen off
       silentAudio = document.createElement('audio');
       silentAudio.loop = true;
-      silentAudio.volume = 0.5;
-      // 3s mono 16-bit 44100Hz WAV with 80ms 880Hz beep at start
+      silentAudio.volume = 0.05;
+      // 2s mono 16-bit 44100Hz — near-silent but not zero
       const sampleRate = 44100;
-      const duration = 3;
+      const duration = 2;
       const numSamples = sampleRate * duration;
       const bytesPerSample = 2;
       const headerSize = 44;
       const dataSize = numSamples * bytesPerSample;
       const buffer = new ArrayBuffer(headerSize + dataSize);
       const view = new DataView(buffer);
-      // RIFF header
       writeString(view, 0, 'RIFF');
       view.setUint32(4, 36 + dataSize, true);
       writeString(view, 8, 'WAVE');
       writeString(view, 12, 'fmt ');
       view.setUint32(16, 16, true);
-      view.setUint16(20, 1, true); // PCM
-      view.setUint16(22, 1, true); // mono
+      view.setUint16(20, 1, true);
+      view.setUint16(22, 1, true);
       view.setUint32(24, sampleRate, true);
       view.setUint32(28, sampleRate * bytesPerSample, true);
       view.setUint16(32, bytesPerSample, true);
-      view.setUint16(34, 16, true); // 16 bits per sample
+      view.setUint16(34, 16, true);
       writeString(view, 36, 'data');
       view.setUint32(40, dataSize, true);
       for (let i = 0; i < numSamples; i++) {
-        const t = i / sampleRate;
-        let value;
-        if (t < 0.08) {
-          // 80ms sine beep at 880Hz
-          value = Math.round(3000 * Math.sin(2 * Math.PI * 880 * t));
-        } else {
-          value = i % 2 === 0 ? 1 : -1;
-        }
-        view.setInt16(headerSize + i * bytesPerSample, value, true);
+        view.setInt16(headerSize + i * bytesPerSample, i % 2 === 0 ? 1 : -1, true);
       }
       const blob = new Blob([buffer], { type: 'audio/wav' });
       silentAudio.src = URL.createObjectURL(blob);
     }
-    silentAudio.play().catch(e => console.log('Silent audio play failed:', e));
+    silentAudio.play().catch(e => console.log('Keepalive audio play failed:', e));
   } catch(e) {
-    console.log('Silent audio setup failed:', e);
+    console.log('Keepalive audio setup failed:', e);
   }
 }
 
