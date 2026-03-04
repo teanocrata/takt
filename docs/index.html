@@ -656,7 +656,7 @@
 
 <script>
 // ── VERSION ──
-const PWA_VERSION = '0.4.0';
+const PWA_VERSION = '0.5.0';
 
 // ── DATA ──
 const TYPE_COLORS = {
@@ -1363,16 +1363,18 @@ function releaseWakeLock() {
   } catch(e) {}
 }
 
-// ── KEEPALIVE AUDIO (short pings to avoid stealing audio focus) ──
-// Chrome Android uses AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK for audio < 5s,
+// ── KEEPALIVE AUDIO (short looped WAV to stay alive without pausing other apps) ──
+// Chrome Android uses AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK for audio < 5s duration,
 // which only ducks other apps briefly instead of pausing them.
-let keepalivePingTimer = null;
-let keepalivePingUrl = null;
+// A looped 2s WAV keeps Chrome alive (continuous playback) while the file's
+// duration property stays < 5s, so Spotify should keep playing.
+let silentAudio = null;
 
-function createPingWav() {
-  // 100ms mono 8kHz WAV with near-inaudible content
+function createKeepaliveWav() {
+  // 2s mono 8kHz WAV with near-inaudible content (amplitude ±1)
   const sampleRate = 8000;
-  const numSamples = Math.floor(sampleRate * 0.1);
+  const duration = 2;
+  const numSamples = sampleRate * duration;
   const bytesPerSample = 2;
   const headerSize = 44;
   const dataSize = numSamples * bytesPerSample;
@@ -1399,30 +1401,24 @@ function createPingWav() {
 
 function startSilentAudio() {
   try {
-    if (!keepalivePingUrl) keepalivePingUrl = createPingWav();
-    // Play a short ping immediately, then every 25 seconds
-    playKeepalivePing();
-    if (!keepalivePingTimer) {
-      keepalivePingTimer = setInterval(playKeepalivePing, 25000);
+    if (!silentAudio) {
+      silentAudio = document.createElement('audio');
+      silentAudio.loop = true;
+      silentAudio.volume = 0.01;
+      silentAudio.src = createKeepaliveWav();
     }
+    silentAudio.play().catch(e => console.log('Keepalive play failed:', e));
   } catch(e) {
-    console.log('Keepalive ping setup failed:', e);
+    console.log('Keepalive setup failed:', e);
   }
-}
-
-function playKeepalivePing() {
-  try {
-    const ping = new Audio(keepalivePingUrl);
-    ping.volume = 0.01;
-    ping.play().catch(() => {});
-  } catch(e) {}
 }
 
 function stopSilentAudio() {
-  if (keepalivePingTimer) {
-    clearInterval(keepalivePingTimer);
-    keepalivePingTimer = null;
-  }
+  try {
+    if (silentAudio) {
+      silentAudio.pause();
+    }
+  } catch(e) {}
 }
 
 // ── WEB WORKER (runs timer in separate thread, less throttled) ──
