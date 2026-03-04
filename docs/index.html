@@ -648,6 +648,7 @@
 <script>
 // ── VERSION ──
 const PWA_VERSION = '0.5.0';
+const PWA_COMMIT = '3aef7bf';
 
 // ── DATA ──
 const TYPE_COLORS = {
@@ -867,7 +868,7 @@ function renderSessionList() {
   customEl.innerHTML = customSessions.length
     ? customSessions.map(s => renderSessionCard(s, true)).join('')
     : '<p style="color:var(--text-muted);font-size:14px;">Aún no has creado sesiones propias</p>';
-  document.getElementById('pwa-version').textContent = `v${PWA_VERSION}`;
+  document.getElementById('pwa-version').textContent = `v${PWA_VERSION} · ${PWA_COMMIT}`;
 }
 
 function renderSessionCard(session, editable = false) {
