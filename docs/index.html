@@ -656,7 +656,7 @@
 
 <script>
 // ── VERSION ──
-const PWA_VERSION = '0.1.0';
+const PWA_VERSION = '0.4.0';
 
 // ── DATA ──
 const TYPE_COLORS = {
@@ -1363,45 +1363,66 @@ function releaseWakeLock() {
   } catch(e) {}
 }
 
-// ── KEEPALIVE AUDIO (Web Audio API — doesn't claim media session / audio focus) ──
-let keepaliveCtx = null;
-let keepaliveOsc = null;
+// ── KEEPALIVE AUDIO (short pings to avoid stealing audio focus) ──
+// Chrome Android uses AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK for audio < 5s,
+// which only ducks other apps briefly instead of pausing them.
+let keepalivePingTimer = null;
+let keepalivePingUrl = null;
+
+function createPingWav() {
+  // 100ms mono 8kHz WAV with near-inaudible content
+  const sampleRate = 8000;
+  const numSamples = Math.floor(sampleRate * 0.1);
+  const bytesPerSample = 2;
+  const headerSize = 44;
+  const dataSize = numSamples * bytesPerSample;
+  const buffer = new ArrayBuffer(headerSize + dataSize);
+  const view = new DataView(buffer);
+  writeString(view, 0, 'RIFF');
+  view.setUint32(4, 36 + dataSize, true);
+  writeString(view, 8, 'WAVE');
+  writeString(view, 12, 'fmt ');
+  view.setUint32(16, 16, true);
+  view.setUint16(20, 1, true);
+  view.setUint16(22, 1, true);
+  view.setUint32(24, sampleRate, true);
+  view.setUint32(28, sampleRate * bytesPerSample, true);
+  view.setUint16(32, bytesPerSample, true);
+  view.setUint16(34, 16, true);
+  writeString(view, 36, 'data');
+  view.setUint32(40, dataSize, true);
+  for (let i = 0; i < numSamples; i++) {
+    view.setInt16(headerSize + i * bytesPerSample, i % 2 === 0 ? 1 : -1, true);
+  }
+  return URL.createObjectURL(new Blob([buffer], { type: 'audio/wav' }));
+}
 
 function startSilentAudio() {
   try {
-    if (!keepaliveCtx) {
-      keepaliveCtx = new (window.AudioContext || window.webkitAudioContext)();
-    }
-    if (keepaliveCtx.state === 'suspended') {
-      keepaliveCtx.resume();
-    }
-    if (!keepaliveOsc) {
-      // Inaudible 20kHz tone at near-zero gain — keeps audio thread alive
-      keepaliveOsc = keepaliveCtx.createOscillator();
-      keepaliveOsc.frequency.value = 20000;
-      const gain = keepaliveCtx.createGain();
-      gain.gain.value = 0.001;
-      keepaliveOsc.connect(gain);
-      gain.connect(keepaliveCtx.destination);
-      keepaliveOsc.start();
+    if (!keepalivePingUrl) keepalivePingUrl = createPingWav();
+    // Play a short ping immediately, then every 25 seconds
+    playKeepalivePing();
+    if (!keepalivePingTimer) {
+      keepalivePingTimer = setInterval(playKeepalivePing, 25000);
     }
   } catch(e) {
-    console.log('Keepalive audio setup failed:', e);
+    console.log('Keepalive ping setup failed:', e);
   }
 }
 
-function stopSilentAudio() {
+function playKeepalivePing() {
   try {
-    if (keepaliveOsc) {
-      keepaliveOsc.stop();
-      keepaliveOsc.disconnect();
-      keepaliveOsc = null;
-    }
-    if (keepaliveCtx) {
-      keepaliveCtx.close();
-      keepaliveCtx = null;
-    }
+    const ping = new Audio(keepalivePingUrl);
+    ping.volume = 0.01;
+    ping.play().catch(() => {});
   } catch(e) {}
+}
+
+function stopSilentAudio() {
+  if (keepalivePingTimer) {
+    clearInterval(keepalivePingTimer);
+    keepalivePingTimer = null;
+  }
 }
 
 // ── WEB WORKER (runs timer in separate thread, less throttled) ──
