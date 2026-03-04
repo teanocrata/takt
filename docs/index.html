@@ -442,7 +442,6 @@
     text-align: center;
     padding: 20px;
   }
-  .finished-icon { font-size: 64px; margin-bottom: 16px; }
   .finished-screen h2 { font-size: 24px; margin-bottom: 8px; }
   .finished-screen p { color: var(--text-muted); margin-bottom: 32px; }
   .finished-stats {
@@ -470,13 +469,6 @@
     color: var(--text-muted);
     margin-top: 4px;
   }
-
-  /* ── PULSE ANIMATION ── */
-  @keyframes pulse {
-    0%, 100% { opacity: 1; }
-    50% { opacity: 0.5; }
-  }
-  .pulsing { animation: pulse 1s ease-in-out infinite; }
 
   /* ── QUICK TYPES ── */
   .quick-types {
@@ -518,8 +510,8 @@
 <body>
 
 <nav class="nav">
-  <div class="nav-brand">🎵 <span>Takt</span></div>
-  <button class="nav-btn" onclick="openSettings()">⚙️ Ajustes</button>
+  <div class="nav-brand"><span>Takt</span></div>
+  <button class="nav-btn" onclick="openSettings()">Ajustes</button>
 </nav>
 
 <!-- SCREEN: Session List -->
@@ -562,7 +554,6 @@
 <!-- SCREEN: Finished -->
 <div id="screen-finished" class="screen">
   <div class="finished-screen">
-    <div class="finished-icon">🏇</div>
     <h2>¡Sesión completada!</h2>
     <p id="finished-name"></p>
     <div class="finished-stats">
@@ -621,34 +612,34 @@
 <!-- SETTINGS MODAL -->
 <div class="modal-overlay" id="modal-settings" onclick="closeSettings(event)">
   <div class="modal">
-    <h3>⚙️ Ajustes</h3>
+    <h3>Ajustes</h3>
     <div class="setting-row">
       <div>
         <div class="setting-label">Voz</div>
         <div class="setting-desc">Anuncia el ejercicio al cambiar</div>
       </div>
-      <div class="toggle on" id="toggle-voice" onclick="toggleSetting(this, 'voice')"></div>
+      <div class="toggle on" id="toggle-voice" role="switch" tabindex="0" aria-checked="true" onclick="toggleSetting(this, 'voice')" onkeydown="if(event.key===' '||event.key==='Enter'){event.preventDefault();toggleSetting(this,'voice')}"></div>
     </div>
     <div class="setting-row">
       <div>
         <div class="setting-label">Vibración</div>
         <div class="setting-desc">Vibra al cambiar de intervalo</div>
       </div>
-      <div class="toggle on" id="toggle-vibrate" onclick="toggleSetting(this, 'vibrate')"></div>
+      <div class="toggle on" id="toggle-vibrate" role="switch" tabindex="0" aria-checked="true" onclick="toggleSetting(this, 'vibrate')" onkeydown="if(event.key===' '||event.key==='Enter'){event.preventDefault();toggleSetting(this,'vibrate')}"></div>
     </div>
     <div class="setting-row">
       <div>
         <div class="setting-label">Aviso 10 segundos</div>
         <div class="setting-desc">Avisa antes de cada cambio</div>
       </div>
-      <div class="toggle on" id="toggle-warning" onclick="toggleSetting(this, 'warning')"></div>
+      <div class="toggle on" id="toggle-warning" role="switch" tabindex="0" aria-checked="true" onclick="toggleSetting(this, 'warning')" onkeydown="if(event.key===' '||event.key==='Enter'){event.preventDefault();toggleSetting(this,'warning')}"></div>
     </div>
     <div class="setting-row">
       <div>
         <div class="setting-label">Pantalla encendida</div>
         <div class="setting-desc">Mantiene la pantalla activa</div>
       </div>
-      <div class="toggle on" id="toggle-wakelock" onclick="toggleSetting(this, 'wakelock')"></div>
+      <div class="toggle on" id="toggle-wakelock" role="switch" tabindex="0" aria-checked="true" onclick="toggleSetting(this, 'wakelock')" onkeydown="if(event.key===' '||event.key==='Enter'){event.preventDefault();toggleSetting(this,'wakelock')}"></div>
     </div>
     <button class="btn btn-block" style="margin-top:16px" onclick="document.getElementById('modal-settings').classList.remove('active')">Cerrar</button>
   </div>
@@ -685,7 +676,7 @@ const QUICK_INTERVALS = [
 const PRESET_SESSIONS = [
   {
     id: 'test-rapido',
-    name: '🧪 Test rápido',
+    name: 'Test rápido',
     desc: 'Intervalos de 30s para probar voz y vibración.',
     preset: true,
     intervals: [
@@ -805,15 +796,15 @@ let settings = {
 const TTS_WORKER_URL = 'https://takt-tts.teanocrata.workers.dev';
 const TTS_VOICE = 'es-ES-ElviraNeural';
 let ttsCache = {};   // { "Paso calentamiento": Blob, ... }
-let ttsReady = false;
+let ttsAbort = null; // AbortController for TTS pre-gen fetches
 
 let customSessions = [];
 let playerState = {
   session: null,
   currentIndex: 0,
   secondsLeft: 0,
-  totalElapsed: 0,
   completedElapsed: 0,
+  sessionStartTime: null,
   playing: false,
   timer: null,
   wakeLock: null,
@@ -824,6 +815,17 @@ let playerState = {
 };
 let editingSessionId = null;
 let editorIntervals = [];
+let ttsAudio = null; // Reusable Audio element for TTS playback
+
+// ── UTILITIES ──
+function escapeHtml(str) {
+  const div = document.createElement('div');
+  div.textContent = str;
+  return div.innerHTML;
+}
+
+// ── CACHED DOM REFS (for updatePlayerDisplay, called every 250ms) ──
+let playerTimeEl, playerProgressEl, playerTotalEl, playerExerciseEl;
 
 // ── INIT ──
 function init() {
@@ -874,19 +876,20 @@ function renderSessionCard(session, editable = false) {
     `<div style="background:${TYPE_COLORS[i.type]};flex-grow:${i.min}"></div>`
   ).join('');
 
+  const escapedId = escapeHtml(session.id);
   const actions = editable ? `
     <div class="session-card-actions">
-      <button onclick="event.stopPropagation();editSession('${session.id}')" title="Editar">✏️</button>
-      <button onclick="event.stopPropagation();deleteSession('${session.id}')" title="Borrar">🗑️</button>
+      <button onclick="event.stopPropagation();showEditor('${escapedId}')" title="Editar">Editar</button>
+      <button onclick="event.stopPropagation();deleteSession('${escapedId}')" title="Borrar">Borrar</button>
     </div>
   ` : '';
 
   return `
-    <div class="session-card" onclick="startSession('${session.id}', ${session.preset || false})">
+    <div class="session-card" onclick="startSession('${escapedId}', ${session.preset || false})">
       <div class="session-card-header">
         <div>
-          <h3>${session.name}</h3>
-          <div style="font-size:13px;color:var(--text-muted);margin-top:2px;">${session.desc || ''}</div>
+          <h3>${escapeHtml(session.name)}</h3>
+          <div style="font-size:13px;color:var(--text-muted);margin-top:2px;">${escapeHtml(session.desc || '')}</div>
         </div>
         <div class="session-card-meta">${totalMin} min</div>
       </div>
@@ -909,8 +912,8 @@ function renderEditorIntervals() {
     <div class="interval-item">
       <div class="interval-color" style="background:${TYPE_COLORS[intv.type]}"></div>
       <div class="interval-item-info">
-        <div class="interval-item-name">${intv.name}</div>
-        <div class="interval-item-time">${intv.min} min · ${intv.type}</div>
+        <div class="interval-item-name">${escapeHtml(intv.name)}</div>
+        <div class="interval-item-time">${intv.min} min · ${escapeHtml(intv.type)}</div>
       </div>
       <div class="interval-item-actions">
         ${i > 0 ? `<button onclick="moveInterval(${i},-1)">↑</button>` : ''}
@@ -960,7 +963,7 @@ function applyQuickInterval(idx) {
 
 function addEditorInterval() {
   const name = document.getElementById('new-interval-name').value.trim();
-  const min = parseInt(document.getElementById('new-interval-min').value) || 1;
+  const min = parseFloat(document.getElementById('new-interval-min').value) || 1;
   const type = document.getElementById('new-interval-type').value;
   if (!name) return;
 
@@ -1006,10 +1009,6 @@ function saveSession() {
   showScreen('list');
 }
 
-function editSession(id) {
-  showEditor(id);
-}
-
 function deleteSession(id) {
   if (confirm('¿Borrar esta sesión?')) {
     customSessions = customSessions.filter(s => s.id !== id);
@@ -1027,14 +1026,25 @@ async function startSession(id, isPreset) {
 
   playerState.session = session;
   playerState.currentIndex = 0;
-  playerState.totalElapsed = 0;
   playerState.completedElapsed = 0;
+  playerState.sessionStartTime = Date.now();
   playerState.playing = false;
+
+  // Cache DOM refs for updatePlayerDisplay (called every 250ms)
+  playerTimeEl = document.getElementById('player-time');
+  playerProgressEl = document.getElementById('player-progress');
+  playerTotalEl = document.getElementById('player-total');
+  playerExerciseEl = document.getElementById('player-exercise');
 
   loadInterval(0);
   renderPlayerDots();
   showScreen('player');
   document.getElementById('player-session-title').textContent = session.name;
+
+  requestNotificationPermission();
+
+  // Register media session handlers once per session
+  registerMediaSessionHandlers();
 
   if (settings.wakelock) requestWakeLock();
 
@@ -1057,9 +1067,11 @@ function loadInterval(idx) {
   playerState.secondsLeft = interval.min * 60;
 
   const color = TYPE_COLORS[interval.type];
-  document.getElementById('player-exercise').textContent = interval.name;
-  document.getElementById('player-exercise').style.color = color;
-  document.getElementById('player-time').style.color = color;
+  const exerciseEl = playerExerciseEl || document.getElementById('player-exercise');
+  const timeEl = playerTimeEl || document.getElementById('player-time');
+  exerciseEl.textContent = interval.name;
+  exerciseEl.style.color = color;
+  timeEl.style.color = color;
 
   const next = session.intervals[idx + 1];
   document.getElementById('player-next').textContent = next
@@ -1071,31 +1083,31 @@ function loadInterval(idx) {
 }
 
 function updatePlayerDisplay() {
+  const timeEl = playerTimeEl || document.getElementById('player-time');
+  const progressEl = playerProgressEl || document.getElementById('player-progress');
+  const totalEl = playerTotalEl || document.getElementById('player-total');
+
   const mins = Math.floor(playerState.secondsLeft / 60);
   const secs = playerState.secondsLeft % 60;
-  document.getElementById('player-time').textContent =
-    `${mins}:${secs.toString().padStart(2, '0')}`;
+  timeEl.textContent = `${mins}:${secs.toString().padStart(2, '0')}`;
 
   const interval = playerState.session.intervals[playerState.currentIndex];
   const totalSecs = interval.min * 60;
   const progress = ((totalSecs - playerState.secondsLeft) / totalSecs) * 100;
-  const bar = document.getElementById('player-progress');
-  bar.style.width = progress + '%';
-  bar.style.background = TYPE_COLORS[interval.type];
+  progressEl.style.width = progress + '%';
+  progressEl.style.background = TYPE_COLORS[interval.type];
 
-  const currentIntervalTotal = playerState.session.intervals[playerState.currentIndex].min * 60;
-  const currentIntervalDone = currentIntervalTotal - playerState.secondsLeft;
+  const currentIntervalDone = totalSecs - playerState.secondsLeft;
   const totalElapsed = playerState.playing ? calcTotalElapsed() : (playerState.completedElapsed + currentIntervalDone);
   const totalMin = Math.floor(totalElapsed / 60);
   const totalSec = Math.floor(totalElapsed % 60);
   const sessionTotal = playerState.session.intervals.reduce((a, i) => a + i.min, 0);
-  document.getElementById('player-total').textContent =
-    `${totalMin}:${totalSec.toString().padStart(2, '0')} / ${sessionTotal}:00`;
+  totalEl.textContent = `${totalMin}:${totalSec.toString().padStart(2, '0')} / ${sessionTotal}:00`;
 }
 
 function renderPlayerDots() {
   const dots = playerState.session.intervals.map((intv, i) =>
-    `<div class="dot" style="background:${TYPE_COLORS[intv.type]}" data-idx="${i}"></div>`
+    `<div class="dot" style="background:${TYPE_COLORS[intv.type]}"></div>`
   ).join('');
   document.getElementById('player-dots').innerHTML = dots;
 }
@@ -1116,7 +1128,7 @@ function playerToggle() {
   }
 }
 
-function playerPlay() {
+function playerPlay(fromAdvance) {
   playerState.playing = true;
   document.getElementById('btn-play').textContent = '⏸';
 
@@ -1130,12 +1142,11 @@ function playerPlay() {
 
   // Announce current exercise
   if (settings.voice) speak(currentInterval.name);
-  if (settings.vibrate) vibrate([200]);
+  if (settings.vibrate) vibrate(fromAdvance ? [200, 100, 200] : [200]);
 
   // Notification + media session for lock screen
   notifyIntervalChange(currentInterval.name);
   updateMediaSession(currentInterval.name, playerState.session.name);
-  requestNotificationPermission();
 
   // Start silent audio to prevent Android from suspending
   startSilentAudio();
@@ -1150,12 +1161,7 @@ function advanceToNext() {
   playerState.completedElapsed += playerState.session.intervals[playerState.currentIndex].min * 60;
   loadInterval(playerState.currentIndex + 1);
   if (playerState.playing && playerState.currentIndex < playerState.session.intervals.length) {
-    const nextInterval = playerState.session.intervals[playerState.currentIndex];
-    if (settings.voice) speak(nextInterval.name);
-    if (settings.vibrate) vibrate([200, 100, 200]);
-    notifyIntervalChange(nextInterval.name);
-    updateMediaSession(nextInterval.name, playerState.session.name);
-    playerPlay();
+    playerPlay(true);
   }
 }
 
@@ -1179,7 +1185,12 @@ function playerPause() {
 function playerNext() {
   getTimerWorker().postMessage('stop');
   stopSilentAudio();
-  playerState.completedElapsed += playerState.session.intervals[playerState.currentIndex].min * 60;
+  // Add actual elapsed for current interval, not full duration
+  const currentTotal = playerState.session.intervals[playerState.currentIndex].min * 60;
+  const actualElapsed = playerState.intervalStartTime
+    ? Math.min(currentTotal, (Date.now() - playerState.intervalStartTime) / 1000)
+    : currentTotal;
+  playerState.completedElapsed += actualElapsed;
   loadInterval(playerState.currentIndex + 1);
   if (playerState.playing && playerState.currentIndex < playerState.session.intervals.length) {
     playerPlay();
@@ -1189,10 +1200,12 @@ function playerNext() {
 function playerPrev() {
   getTimerWorker().postMessage('stop');
   stopSilentAudio();
-  if (playerState.currentIndex > 0) {
-    playerState.completedElapsed = Math.max(0, playerState.completedElapsed - playerState.session.intervals[playerState.currentIndex - 1].min * 60);
-  }
   const prevIdx = Math.max(0, playerState.currentIndex - 1);
+  // Recalculate completedElapsed as sum of all intervals before target
+  playerState.completedElapsed = 0;
+  for (let i = 0; i < prevIdx; i++) {
+    playerState.completedElapsed += playerState.session.intervals[i].min * 60;
+  }
   loadInterval(prevIdx);
   if (playerState.playing) playerPlay();
 }
@@ -1201,6 +1214,7 @@ function stopPlayer() {
   playerPause();
   stopSilentAudio();
   releaseWakeLock();
+  if (ttsAbort) { ttsAbort.abort(); ttsAbort = null; }
   showScreen('list');
 }
 
@@ -1208,11 +1222,12 @@ function finishSession() {
   playerPause();
   stopSilentAudio();
   releaseWakeLock();
+  if (ttsAbort) { ttsAbort.abort(); ttsAbort = null; }
 
   const session = playerState.session;
-  const totalSecs = session.intervals.reduce((a, i) => a + i.min * 60, 0);
-  const totalMin = Math.floor(totalSecs / 60);
-  const totalSec = Math.round(totalSecs % 60);
+  const actualSecs = Math.floor((Date.now() - playerState.sessionStartTime) / 1000);
+  const totalMin = Math.floor(actualSecs / 60);
+  const totalSec = actualSecs % 60;
 
   document.getElementById('finished-name').textContent = session.name;
   document.getElementById('finished-time').textContent =
@@ -1279,8 +1294,10 @@ function playAlertSound() {
 
 // ── TTS ──
 async function preGenerateTTS(session) {
-  ttsReady = false;
   ttsCache = {};
+  if (ttsAbort) ttsAbort.abort();
+  ttsAbort = new AbortController();
+  const signal = ttsAbort.signal;
 
   // Collect unique texts to generate
   const texts = new Set();
@@ -1299,17 +1316,17 @@ async function preGenerateTTS(session) {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ text, voice: TTS_VOICE }),
+        signal,
       });
       if (res.ok) {
         ttsCache[text] = await res.blob();
       }
     } catch (e) {
-      console.warn('TTS pre-gen failed for:', text, e);
+      if (e.name !== 'AbortError') { /* TTS pre-gen failed, will use fallback */ }
     }
   });
 
   await Promise.all(fetches);
-  ttsReady = Object.keys(ttsCache).length > 0;
 
   if (indicator) indicator.style.display = 'none';
 }
@@ -1319,10 +1336,15 @@ function speak(text) {
   const blob = ttsCache[text];
   if (blob) {
     const url = URL.createObjectURL(blob);
-    const audio = new Audio(url);
-    audio.volume = 1.0;
-    audio.play().catch(() => {});
-    audio.onended = () => URL.revokeObjectURL(url);
+    if (!ttsAudio) {
+      ttsAudio = new Audio();
+      ttsAudio.volume = 1.0;
+    }
+    const prevUrl = ttsAudio.dataset.objectUrl;
+    if (prevUrl) URL.revokeObjectURL(prevUrl);
+    ttsAudio.src = url;
+    ttsAudio.dataset.objectUrl = url;
+    ttsAudio.play().catch(() => {});
     return;
   }
   // Fallback: alert beep + speechSynthesis (foreground only)
@@ -1407,10 +1429,8 @@ function startSilentAudio() {
       silentAudio.volume = 0.01;
       silentAudio.src = createKeepaliveWav();
     }
-    silentAudio.play().catch(e => console.log('Keepalive play failed:', e));
-  } catch(e) {
-    console.log('Keepalive setup failed:', e);
-  }
+    silentAudio.play().catch(() => {});
+  } catch(e) {}
 }
 
 function stopSilentAudio() {
@@ -1438,7 +1458,9 @@ function createTimerWorker() {
     };
   `;
   const blob = new Blob([workerCode], { type: 'application/javascript' });
-  const worker = new Worker(URL.createObjectURL(blob));
+  const blobUrl = URL.createObjectURL(blob);
+  const worker = new Worker(blobUrl);
+  URL.revokeObjectURL(blobUrl);
   return worker;
 }
 
@@ -1457,7 +1479,6 @@ function timerTick() {
   const elapsed = Date.now() - playerState.intervalStartTime;
   const remaining = Math.max(0, playerState.intervalDuration - elapsed);
   playerState.secondsLeft = Math.ceil(remaining / 1000);
-  playerState.totalElapsed = calcTotalElapsed();
 
   // Warning at 10 seconds
   if (playerState.secondsLeft <= 10 && playerState.secondsLeft > 3 && !playerState.warned10 && settings.warning) {
@@ -1501,6 +1522,17 @@ function notifyIntervalChange(name) {
 }
 
 // ── MEDIA SESSION (shows in notification bar / lock screen) ──
+function registerMediaSessionHandlers() {
+  try {
+    if ('mediaSession' in navigator) {
+      navigator.mediaSession.setActionHandler('play', () => playerToggle());
+      navigator.mediaSession.setActionHandler('pause', () => playerToggle());
+      navigator.mediaSession.setActionHandler('nexttrack', () => playerNext());
+      navigator.mediaSession.setActionHandler('previoustrack', () => playerPrev());
+    }
+  } catch(e) {}
+}
+
 function updateMediaSession(exerciseName, sessionName) {
   try {
     if ('mediaSession' in navigator) {
@@ -1510,11 +1542,6 @@ function updateMediaSession(exerciseName, sessionName) {
         album: sessionName
       });
       navigator.mediaSession.playbackState = 'playing';
-
-      navigator.mediaSession.setActionHandler('play', () => playerToggle());
-      navigator.mediaSession.setActionHandler('pause', () => playerToggle());
-      navigator.mediaSession.setActionHandler('nexttrack', () => playerNext());
-      navigator.mediaSession.setActionHandler('previoustrack', () => playerPrev());
     }
   } catch(e) {}
 }
@@ -1540,6 +1567,8 @@ document.addEventListener('visibilitychange', () => {
           playerState.secondsLeft = Math.ceil((intervalMs - overflow) / 1000);
           playerState.intervalStartTime = Date.now() - overflow;
           playerState.intervalDuration = intervalMs;
+          playerState.warned10 = false;
+          playerState.warned3 = false;
           if (settings.voice) speak(playerState.session.intervals[idx].name);
           updatePlayerDisplay();
           return;
@@ -1569,6 +1598,7 @@ function closeSettings(e) {
 function toggleSetting(el, key) {
   settings[key] = !settings[key];
   el.classList.toggle('on', settings[key]);
+  el.setAttribute('aria-checked', String(settings[key]));
   saveSettings();
 
   if (key === 'wakelock' && settings.wakelock && playerState.playing) {
@@ -1581,13 +1611,16 @@ function toggleSetting(el, key) {
 function updateSettingToggles() {
   for (const key of Object.keys(settings)) {
     const el = document.getElementById(`toggle-${key}`);
-    if (el) el.classList.toggle('on', settings[key]);
+    if (el) {
+      el.classList.toggle('on', settings[key]);
+      el.setAttribute('aria-checked', String(settings[key]));
+    }
   }
 }
 
 // ── SERVICE WORKER ──
 if ('serviceWorker' in navigator) {
-  navigator.serviceWorker.register('./sw.js').catch(e => console.log('SW register failed:', e));
+  navigator.serviceWorker.register('./sw.js').catch(() => {});
 }
 
 // ── START ──

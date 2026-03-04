@@ -1,6 +1,5 @@
 const CACHE_NAME = 'takt-v2';
 const ASSETS = [
-  './',
   './index.html',
   './manifest.json',
   'https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;700&family=DM+Mono:wght@400;500&display=swap'
@@ -45,5 +44,6 @@ self.addEventListener('fetch', event => {
   // Everything else: cache-first (fonts, etc.)
   event.respondWith(
     caches.match(event.request).then(cached => cached || fetch(event.request))
+      .catch(() => new Response('', { status: 503, statusText: 'Offline' }))
   );
 });
