@@ -12,7 +12,7 @@ const PlayerContext = createContext();
 
 export function PlayerProvider({ children }) {
   const { getSession } = useSessions();
-  const { announceInterval, warn10Seconds, warn3Seconds, announceComplete } =
+  const { announceInterval, warn10Seconds, warn3Seconds, announceComplete, preGenerateTTS } =
     useAlerts();
   const backgroundAudio = useBackgroundAudio();
 
@@ -104,6 +104,7 @@ export function PlayerProvider({ children }) {
       setTotalElapsed(0);
 
       await backgroundAudio.start();
+      preGenerateTTS(s).catch(() => {});
       scheduleIntervalNotifications(s).catch(() => {});
       startInterval(0);
     },

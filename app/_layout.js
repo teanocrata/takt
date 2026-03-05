@@ -1,4 +1,5 @@
 import { useEffect } from 'react';
+import { Platform } from 'react-native';
 import { Stack } from 'expo-router';
 import { useFonts } from 'expo-font';
 import * as SplashScreen from 'expo-splash-screen';
@@ -28,7 +29,9 @@ export default function RootLayout() {
     requestNotificationPermissions();
   }, []);
 
-  if (!fontsLoaded) return null;
+  // On web, useFonts registers @font-face but may never flip to true;
+  // the fonts are still usable, so skip the gate on web.
+  if (!fontsLoaded && Platform.OS !== 'web') return null;
 
   return (
     <SettingsProvider>

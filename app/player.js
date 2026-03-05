@@ -45,11 +45,11 @@ export default function PlayerScreen() {
   // Keep screen awake
   useEffect(() => {
     if (settings.keepAwake && isPlaying) {
-      activateKeepAwakeAsync();
+      activateKeepAwakeAsync().catch(() => {});
     } else {
-      deactivateKeepAwake();
+      deactivateKeepAwake().catch(() => {});
     }
-    return () => deactivateKeepAwake();
+    return () => { deactivateKeepAwake().catch(() => {}); };
   }, [settings.keepAwake, isPlaying]);
 
   // Navigate to complete screen when session is done

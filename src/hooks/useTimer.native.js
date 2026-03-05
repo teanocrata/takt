@@ -33,6 +33,8 @@ export function useTimer({ onTick, onIntervalComplete, onWarning10, onWarning3 }
     }
 
     if (remaining <= 0) {
+      clearInterval(timerRef.current);
+      stateRef.current.isPlaying = false;
       onIntervalComplete?.();
       return;
     }

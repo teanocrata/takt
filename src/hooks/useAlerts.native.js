@@ -47,5 +47,7 @@ export function useAlerts() {
     }
   }, [settings.voice, settings.vibrate]);
 
-  return { announceInterval, warn10Seconds, warn3Seconds, announceComplete };
+  const preGenerateTTS = useCallback(async () => {}, []);
+
+  return { announceInterval, warn10Seconds, warn3Seconds, announceComplete, preGenerateTTS };
 }
