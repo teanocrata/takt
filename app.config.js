@@ -9,10 +9,16 @@ try {
   // Not a git repo or git not available
 }
 
+const baseUrl = process.env.EXPO_BASE_URL || '';
+
 module.exports = {
   ...appJson,
   expo: {
     ...appJson.expo,
+    experiments: {
+      ...appJson.expo?.experiments,
+      ...(baseUrl ? { baseUrl } : {}),
+    },
     extra: {
       commitHash,
     },
