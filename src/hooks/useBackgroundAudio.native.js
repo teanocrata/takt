@@ -13,19 +13,28 @@ export function useBackgroundAudio() {
       await setAudioModeAsync({
         playsInSilentMode: true,
         shouldPlayInBackground: true,
-        interruptionMode: 'duckOthers',
+        interruptionMode: 'doNotMix',
       });
       player.loop = true;
       player.volume = 0.01;
       player.play();
+      player.setActiveForLockScreen(true, { title: 'Takt' });
       isActive.current = true;
     } catch (e) {
       console.warn('Background audio start failed:', e);
     }
   }, [player]);
 
+  const updateMetadata = useCallback((title) => {
+    if (!isActive.current) return;
+    try {
+      player.updateLockScreenMetadata({ title });
+    } catch (e) {}
+  }, [player]);
+
   const stop = useCallback(() => {
     try {
+      player.clearLockScreenControls();
       player.pause();
       isActive.current = false;
     } catch (e) {
@@ -33,5 +42,5 @@ export function useBackgroundAudio() {
     }
   }, [player]);
 
-  return { start, stop };
+  return { start, stop, updateMetadata };
 }

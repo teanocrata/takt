@@ -73,5 +73,7 @@ export function useBackgroundAudio() {
     }
   }, []);
 
-  return { start, stop };
+  const updateMetadata = useCallback(() => {}, []);
+
+  return { start, stop, updateMetadata };
 }

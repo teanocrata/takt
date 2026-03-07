@@ -48,9 +48,10 @@ export function PlayerProvider({ children }) {
       completedSecondsRef.current = completed;
 
       announceInterval(interval);
+      backgroundAudio.updateMetadata(interval.name);
       timer.start(durationMs);
     },
-    [announceInterval]
+    [announceInterval, backgroundAudio]
   );
 
   const handleIntervalComplete = useCallback(() => {
