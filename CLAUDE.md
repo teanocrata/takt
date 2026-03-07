@@ -265,6 +265,45 @@ Both workflows trigger on push to `main` and on `workflow_dispatch`:
 - Uploads APK as artifact (30-day retention)
 - Takes ~28 minutes
 
+### Cloudflare Worker — Edge TTS proxy
+
+**Why it exists:**
+The Web Speech API (`speechSynthesis`) stops working when the browser tab is backgrounded on Android Chrome. Since Takt must announce intervals with the screen off, we need an alternative. Edge TTS (Microsoft's neural TTS service) produces high-quality audio, but it requires a WebSocket connection with specific headers (`Origin`, `Sec-MS-GEC` token) that browsers cannot send from client-side JS. The Cloudflare Worker acts as a proxy: the browser sends a simple POST request, the Worker opens the WebSocket to Edge TTS and returns the generated MP3.
+
+**How it works:**
+1. At session start, the web client (`src/hooks/useAlerts.web.js`) pre-fetches TTS audio for all interval names by POSTing to the Worker
+2. The Worker (`tts-worker/worker.js`) connects to `speech.platform.bing.com` via WebSocket, sends SSML, and streams back MP3 chunks
+3. The MP3 is cached in-memory on the client; during playback it's played via `<audio>` element (works in background)
+4. If the Worker is unreachable, falls back to `speechSynthesis` (foreground only)
+
+**Endpoint:**
+- URL: `https://takt-tts.teanocrata.workers.dev/tts`
+- Method: `POST`
+- Body: `{ "text": "Trote de trabajo", "voice": "es-ES-ElviraNeural" }`
+- Response: `audio/mpeg` (MP3)
+- Optional params: `rate` (default `-10%`), `pitch` (default `+0Hz`)
+- CORS: allows all origins
+
+**Source code:** `tts-worker/worker.js` + `tts-worker/wrangler.toml`
+
+**Deploying / updating the Worker:**
+```bash
+cd tts-worker
+npx wrangler login        # one-time: authenticates with Cloudflare account
+npx wrangler deploy       # deploys to takt-tts.teanocrata.workers.dev
+```
+
+**Cloudflare dashboard:**
+- Log in at https://dash.cloudflare.com → Workers & Pages → `takt-tts`
+- Shows request metrics, logs, and allows editing the Worker online
+- The Worker runs on the free tier (100k requests/day)
+
+**Notes:**
+- No `account_id` in `wrangler.toml` — it uses whichever account is authenticated via `wrangler login`
+- The Worker is not deployed automatically by CI; changes to `tts-worker/` must be deployed manually
+- The `TRUSTED_CLIENT_TOKEN` and `Sec-MS-GEC` generation mimic the Edge browser's TTS protocol — if Microsoft changes the protocol, the Worker may need updating
+- Native Android does not use this Worker; it uses `expo-speech` directly
+
 ## Testing on device
 
 The user has a Fairphone 5 (Android). For development:
