@@ -1,5 +1,4 @@
 import { useRef, useCallback, useEffect } from 'react';
-import { AppState } from 'react-native';
 
 export function useTimer({ onTick, onIntervalComplete, onWarning10, onWarning3 }) {
   const timerRef = useRef(null);
@@ -90,17 +89,6 @@ export function useTimer({ onTick, onIntervalComplete, onWarning10, onWarning3 }
     if (!s.isPlaying) return s.pauseRemaining;
     return Math.max(0, s.intervalDuration - (Date.now() - s.intervalStartTime));
   }, []);
-
-  // Handle app state changes (background -> foreground)
-  useEffect(() => {
-    const sub = AppState.addEventListener('change', (state) => {
-      if (state === 'active' && stateRef.current.isPlaying) {
-        // Force a tick to catch up
-        tick();
-      }
-    });
-    return () => sub.remove();
-  }, [tick]);
 
   // Cleanup on unmount
   useEffect(() => {

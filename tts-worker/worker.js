@@ -77,7 +77,7 @@ function extractAudioFromBinaryFrame(data) {
 
 const CORS_HEADERS = {
   'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Methods': 'POST, OPTIONS',
+  'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
   'Access-Control-Allow-Headers': 'Content-Type',
 };
 
@@ -88,25 +88,35 @@ export default {
     }
 
     const url = new URL(request.url);
-    if (url.pathname !== '/tts' || request.method !== 'POST') {
-      return new Response('POST /tts', { status: 404, headers: CORS_HEADERS });
+    if (url.pathname !== '/tts') {
+      return new Response('GET or POST /tts', { status: 404, headers: CORS_HEADERS });
     }
 
-    let body;
-    try {
-      body = await request.json();
-    } catch {
-      return new Response('Invalid JSON', { status: 400, headers: CORS_HEADERS });
+    let text, voice, rate, pitch;
+
+    if (request.method === 'GET') {
+      text = url.searchParams.get('text');
+      voice = url.searchParams.get('voice') || 'es-ES-ElviraNeural';
+      rate = url.searchParams.get('rate') || '-10%';
+      pitch = url.searchParams.get('pitch') || '+0Hz';
+    } else if (request.method === 'POST') {
+      let body;
+      try {
+        body = await request.json();
+      } catch {
+        return new Response('Invalid JSON', { status: 400, headers: CORS_HEADERS });
+      }
+      text = body.text;
+      voice = body.voice || 'es-ES-ElviraNeural';
+      rate = body.rate || '-10%';
+      pitch = body.pitch || '+0Hz';
+    } else {
+      return new Response('Method not allowed', { status: 405, headers: CORS_HEADERS });
     }
 
-    const text = body.text;
     if (!text || typeof text !== 'string') {
-      return new Response('Missing "text" field', { status: 400, headers: CORS_HEADERS });
+      return new Response('Missing "text" parameter', { status: 400, headers: CORS_HEADERS });
     }
-
-    const voice = body.voice || 'es-ES-ElviraNeural';
-    const rate = body.rate || '-10%';
-    const pitch = body.pitch || '+0Hz';
     const requestId = connectId();
     const gecToken = await generateSecMsGec();
     const muid = Array.from(crypto.getRandomValues(new Uint8Array(16)))

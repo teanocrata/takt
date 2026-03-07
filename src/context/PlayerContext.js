@@ -1,4 +1,5 @@
 import { createContext, useContext, useState, useCallback, useRef, useEffect } from 'react';
+import { AppState, Platform } from 'react-native';
 import { useTimer } from '../hooks/useTimer';
 import { useAlerts } from '../hooks/useAlerts';
 import { useBackgroundAudio } from '../hooks/useBackgroundAudio';
@@ -28,17 +29,23 @@ export function PlayerProvider({ children }) {
   const totalElapsedRef = useRef(0);
   const completedSecondsRef = useRef(0);
 
+  // Timing refs for background recovery (native only)
+  const isPlayingRef = useRef(false);
+  const sessionStartTimeRef = useRef(0);
+  const pauseAccumulatorRef = useRef(0);
+  const pauseStartRef = useRef(0);
+
   const startInterval = useCallback(
-    (idx) => {
+    (idx, remainingMs) => {
       const s = sessionRef.current;
       if (!s || idx >= s.intervals.length) return;
 
       const interval = s.intervals[idx];
-      const durationMs = interval.minutes * 60 * 1000;
+      const durationMs = remainingMs != null ? remainingMs : interval.minutes * 60 * 1000;
 
       indexRef.current = idx;
       setCurrentIndex(idx);
-      setSecondsLeft(interval.minutes * 60);
+      setSecondsLeft(durationMs / 1000);
 
       // Calculate completed seconds (sum of all prior intervals)
       let completed = 0;
@@ -60,6 +67,7 @@ export function PlayerProvider({ children }) {
 
     if (!s || nextIdx >= s.intervals.length) {
       // Session complete
+      isPlayingRef.current = false;
       setIsPlaying(false);
       setIsComplete(true);
       announceComplete();
@@ -97,6 +105,10 @@ export function PlayerProvider({ children }) {
       indexRef.current = 0;
       totalElapsedRef.current = 0;
       completedSecondsRef.current = 0;
+      sessionStartTimeRef.current = Date.now();
+      pauseAccumulatorRef.current = 0;
+      pauseStartRef.current = 0;
+      isPlayingRef.current = true;
 
       setSession(s);
       setCurrentIndex(0);
@@ -115,8 +127,15 @@ export function PlayerProvider({ children }) {
   const togglePlayPause = useCallback(() => {
     if (isPlaying) {
       timer.pause();
+      pauseStartRef.current = Date.now();
+      isPlayingRef.current = false;
       setIsPlaying(false);
     } else {
+      if (pauseStartRef.current > 0) {
+        pauseAccumulatorRef.current += Date.now() - pauseStartRef.current;
+        pauseStartRef.current = 0;
+      }
+      isPlayingRef.current = true;
       timer.resume();
       setIsPlaying(true);
     }
@@ -138,6 +157,7 @@ export function PlayerProvider({ children }) {
     timer.stop();
     backgroundAudio.stop();
     cancelAllNotifications();
+    isPlayingRef.current = false;
     setSession(null);
     setIsPlaying(false);
     setIsComplete(false);
@@ -146,6 +166,58 @@ export function PlayerProvider({ children }) {
     setTotalElapsed(0);
     sessionRef.current = null;
   }, [timer, backgroundAudio]);
+
+  // Background recovery: recalculate position on app resume (native only)
+  useEffect(() => {
+    if (Platform.OS === 'web') return;
+
+    const sub = AppState.addEventListener('change', (nextState) => {
+      if (nextState !== 'active') return;
+      if (!sessionRef.current || !isPlayingRef.current) return;
+
+      const elapsed =
+        Date.now() - sessionStartTimeRef.current - pauseAccumulatorRef.current;
+      const s = sessionRef.current;
+
+      // Find which interval should be active based on wall-clock time
+      let accumulated = 0;
+      for (let i = 0; i < s.intervals.length; i++) {
+        accumulated += s.intervals[i].minutes * 60 * 1000;
+        if (elapsed < accumulated) {
+          const remaining = accumulated - elapsed;
+
+          if (i !== indexRef.current) {
+            // Skipped one or more intervals — jump to the correct one
+            startInterval(i, remaining);
+          } else {
+            // Same interval, just resync the timer and UI
+            timer.stop();
+            timer.start(remaining);
+            setSecondsLeft(remaining / 1000);
+            const intervalDurationMs = s.intervals[i].minutes * 60 * 1000;
+            const intervalElapsed = (intervalDurationMs - remaining) / 1000;
+            let completed = 0;
+            for (let j = 0; j < i; j++) {
+              completed += s.intervals[j].minutes * 60;
+            }
+            setTotalElapsed(completed + intervalElapsed);
+          }
+          return;
+        }
+      }
+
+      // All intervals elapsed — session complete
+      timer.stop();
+      isPlayingRef.current = false;
+      setIsPlaying(false);
+      setIsComplete(true);
+      announceComplete();
+      backgroundAudio.stop();
+      cancelAllNotifications();
+    });
+
+    return () => sub.remove();
+  }, [timer, startInterval, announceComplete, backgroundAudio]);
 
   const totalSessionSeconds = session
     ? session.intervals.reduce((sum, i) => sum + i.minutes * 60, 0)
