@@ -8,15 +8,19 @@ The first use case is equestrian training (dressage, lunging, jumping), but the 
 
 ## Current state
 
-A PWA prototype exists (index.html + manifest.json + sw.js) that validates the concept but has a critical limitation: on Android, when the screen is off, Chrome suspends the process and the timer stops. This makes the PWA unviable for real use (the user carries the phone in their pocket while riding).
+Single Expo codebase that builds for both **web** and **native Android** from the same source. The original standalone PWA (`docs/`) is legacy and no longer maintained.
 
-The next step is migrating to a native app with Expo/React Native for real access to foreground services, native audio, and scheduled notifications.
+- **Web (PWA):** Live at https://teanocrata.github.io/takt/ — fully functional including background execution with screen off on Android Chrome
+- **Native Android:** APK built via GitHub Actions — uses foreground service for background execution
+- **iOS:** Not built yet, but Expo supports it when needed
+
+Both platforms deploy automatically on push to `main` via GitHub Actions.
 
 ## Tech stack
 
-- **Framework:** Expo (React Native)
-- **Language:** JavaScript (user prefers JS over TS, but is open to TypeScript if it adds value)
-- **Target platform:** Android (user has a Fairphone 5)
+- **Framework:** Expo SDK 55 (React Native) with `npx expo export --platform web` for web builds
+- **Language:** JavaScript (user prefers JS over TS)
+- **Target platforms:** Android (Fairphone 5) + Web (GitHub Pages)
 - **iOS:** Not a priority now, but Expo allows building for iOS in the future
 
 ## Core features (MVP)
@@ -33,26 +37,38 @@ The next step is migrating to a native app with Expo/React Native for real acces
 - Current exercise name and next exercise name visible
 
 ### Alerts (all individually toggleable)
-- **Voice (TTS):** Announces interval name on change. Use expo-speech with language es-ES
-- **Vibration:** Vibration pattern on interval change. Use expo-haptics
+- **Voice (TTS):** Announces interval name on change
+  - Native: `expo-speech` with `es-ES`
+  - Web: Edge TTS via Cloudflare Worker (`takt-tts.teanocrata.workers.dev`, voice `es-ES-ElviraNeural`), falls back to `speechSynthesis`
+- **Vibration:** Vibration pattern on interval change
+  - Native: `expo-haptics`
+  - Web: `navigator.vibrate()`
 - **10-second warning:** Voice says "Diez segundos" and short vibration before each change
-- **Notifications:** System notification on interval change (important for screen-off). Use expo-notifications
+- **Notifications:** System notification on interval change
+  - Native: `expo-notifications` with `TIME_INTERVAL` scheduled triggers
+  - Web: Web Notifications API with `setTimeout` scheduling
 
 ### Background execution (CRITICAL)
-This is the most important requirement and the reason for migrating from PWA to native. The app MUST keep working with:
-- Screen off
-- App in background
-- Phone in pocket
+The app MUST keep working with screen off, app in background, phone in pocket.
 
-Recommended strategy:
-- Use expo-av to play audio (TTS or a sound) which keeps the audio service active
-- Use expo-task-manager and expo-background-fetch if needed
-- Use expo-notifications to schedule notifications with each interval's timing when starting a session (so even if the process is suspended, notifications will arrive)
-- Use expo-keep-awake as a complement (not as the primary solution)
+**Native Android implementation:**
+- `expo-audio` plays a looped `silence.wav` at volume 0.01 to keep the audio service alive
+- `player.setActiveForLockScreen(true)` starts the `AudioControlsService` foreground service — **required** for sustained background playback (without it Android kills the JS thread after ~3 min)
+- `interruptionMode: 'doNotMix'` is required by expo-audio when using `setActiveForLockScreen` (trade-off: other audio apps pause while session is running)
+- `expo-notifications` schedules all interval notifications upfront so they fire even if the process is suspended
+- `setInterval(tick, 250)` in JS main thread for the countdown timer
+- `AppState` listener to force a tick on foreground resume
+
+**Web implementation (works with screen off on Android Chrome):**
+- Web Worker with `setInterval` for un-throttled timer ticks (Chrome throttles main-thread timers in background tabs)
+- `<audio>` element plays a 2-second in-memory WAV (alternating ±1 samples) in a loop at volume 0.01 — Chrome Android uses `AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK` for audio <5s, which ducks other apps briefly instead of pausing them (Spotify keeps playing)
+- Edge TTS via Cloudflare Worker for background-capable TTS (Web Speech API stops working when tab is backgrounded)
+- TTS audio is pre-fetched for all interval names at session start and cached in memory
+- Web Notifications API for interval change notifications
 
 ### Media Session / Lock screen controls
-- Show current exercise name in Android media controls
-- Allow pause/play/next/prev from the lock screen
+- Native: `setActiveForLockScreen` shows current exercise name in Android media notification, updated on each interval change via `updateLockScreenMetadata`
+- Web: not implemented yet
 
 ### Session management
 - **Preset sessions:** Come preloaded (see "Example equestrian sessions" section)
@@ -207,17 +223,47 @@ interface Settings {
 }
 ```
 
-## Recommended Expo dependencies
+## Platform-specific file architecture
 
-- expo-av — Audio to keep service alive in background
-- expo-speech — Text-to-speech
-- expo-haptics — Vibration
-- expo-notifications — Scheduled notifications
+Metro resolves `.web.js` vs `.native.js` automatically based on the target platform. Four modules have platform-specific implementations:
+
+| Module | Native (`.native.js`) | Web (`.web.js`) |
+|--------|----------------------|-----------------|
+| `useTimer` | `setInterval` + `AppState` listener | Web Worker (un-throttled in background) |
+| `useAlerts` | `expo-speech` + `expo-haptics` | Edge TTS via Cloudflare Worker + `navigator.vibrate()` |
+| `useBackgroundAudio` | `expo-audio` + foreground service | `<audio>` element with in-memory WAV |
+| `notifications` | `expo-notifications` (scheduled) | Web Notifications API + `setTimeout` |
+
+All other code (PlayerContext, SessionContext, SettingsContext, UI components, navigation) is shared.
+
+## Expo dependencies
+
+- expo-audio — Background audio keepalive + foreground service (native), replaced expo-av
+- expo-speech — Text-to-speech (native only)
+- expo-haptics — Vibration (native only)
+- expo-notifications — Scheduled notifications (native only)
 - expo-keep-awake — Keep screen on
-- expo-task-manager — Background tasks if needed
 - @react-native-async-storage/async-storage — Local persistence
 - react-native-reanimated — Smooth animations
 - react-native-gesture-handler — Drag & drop in editor
+- expo-font — DM Sans + DM Mono
+
+## Deployment and CI/CD
+
+Both workflows trigger on push to `main` and on `workflow_dispatch`:
+
+### Web → GitHub Pages
+- Workflow: `.github/workflows/deploy-pages.yml`
+- Runs `npx expo export --platform web` with `EXPO_BASE_URL=/takt`
+- `app.config.js` reads `EXPO_BASE_URL` and sets `experiments.baseUrl` for correct asset paths under the `/takt` subpath
+- Deploys to https://teanocrata.github.io/takt/
+- Takes ~1 minute
+
+### Android → APK artifact
+- Workflow: `.github/workflows/build-android.yml`
+- Runs `npx expo prebuild --platform android --clean` + `./gradlew assembleRelease`
+- Uploads APK as artifact (30-day retention)
+- Takes ~28 minutes
 
 ## Testing on device
 
@@ -230,11 +276,14 @@ For native features that Expo Go doesn't support (like background audio), use a 
 1. `npx expo run:android` with phone connected via USB
 2. Or `eas build --profile development --platform android` for cloud builds
 
+For web testing: `npx expo start --web` or `npx expo export --platform web` + serve `dist/`
+
 ## Repository
 
-- GitHub repo: takt
-- The original PWA (index.html, manifest.json, sw.js) can stay in a /pwa folder or a separate branch for reference
-- The Expo project goes in the root
+- GitHub repo: teanocrata/takt
+- Web: https://teanocrata.github.io/takt/
+- The original standalone PWA (`docs/`) is legacy — the Expo web export replaces it
+- The Expo project is in the root
 
 ## Conventions
 
@@ -243,14 +292,20 @@ For native features that Expo Go doesn't support (like background audio), use a 
 - Commit format: conventional commits (feat:, fix:, refactor:, docs:)
 - Standard Expo folder structure
 
-## Implementation priorities
+## Implementation status
 
-1. Expo setup + basic navigation
-2. Working player with timer that runs in background (the most critical requirement)
-3. TTS + vibration + notifications
+Done:
+1. Expo setup + navigation (expo-router)
+2. Working player with timer that runs in background (web + native)
+3. TTS + vibration + notifications (platform-specific implementations)
 4. Session list with presets loaded
-5. Custom session persistence
+5. Custom session persistence (AsyncStorage)
 6. Session editor
 7. Settings
-8. Media session / lock screen controls
-9. Polish UX and animations
+8. Web deployment (GitHub Pages) + Android APK (GitHub Actions)
+9. Lock screen metadata on native (current interval name)
+
+Pending:
+- Lock screen play/pause/next/prev controls on native
+- Web media session integration
+- Polish UX and animations
