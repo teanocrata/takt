@@ -8,7 +8,7 @@ The first use case is equestrian training (dressage, lunging, jumping), but the 
 
 ## Current state
 
-Single Expo codebase that builds for both **web** and **native Android** from the same source. The original standalone PWA (`docs/`) is legacy and no longer maintained.
+Single Expo codebase that builds for both **web** and **native Android** from the same source.
 
 - **Web (PWA):** Live at https://teanocrata.github.io/takt/ — fully functional including background execution with screen off on Android Chrome
 - **Native Android:** APK built via GitHub Actions — uses foreground service for background execution
@@ -282,7 +282,6 @@ For web testing: `npx expo start --web` or `npx expo export --platform web` + se
 
 - GitHub repo: teanocrata/takt
 - Web: https://teanocrata.github.io/takt/
-- The original standalone PWA (`docs/`) is legacy — the Expo web export replaces it
 - The Expo project is in the root
 
 ## Conventions
