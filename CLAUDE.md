@@ -38,7 +38,7 @@ Both platforms deploy automatically on push to `main` via GitHub Actions.
 
 ### Alerts (all individually toggleable)
 - **Voice (TTS):** Announces interval name on change
-  - Native: `expo-speech` with `es-ES`
+  - Native: Edge TTS via Cloudflare Worker (same as web) using `expo-audio` `preload` + `createAudioPlayer`, falls back to `expo-speech`
   - Web: Edge TTS via Cloudflare Worker (`takt-tts.teanocrata.workers.dev`, voice `es-ES-ElviraNeural`), falls back to `speechSynthesis`
 - **Vibration:** Vibration pattern on interval change
   - Native: `expo-haptics`
@@ -230,7 +230,7 @@ Metro resolves `.web.js` vs `.native.js` automatically based on the target platf
 | Module | Native (`.native.js`) | Web (`.web.js`) |
 |--------|----------------------|-----------------|
 | `useTimer` | `setInterval` + `AppState` listener | Web Worker (un-throttled in background) |
-| `useAlerts` | `expo-speech` + `expo-haptics` | Edge TTS via Cloudflare Worker + `navigator.vibrate()` |
+| `useAlerts` | Edge TTS via Cloudflare Worker (`expo-audio` preload/play, falls back to `expo-speech`) + `expo-haptics` | Edge TTS via Cloudflare Worker (`fetch` + `<audio>`) + `navigator.vibrate()` |
 | `useBackgroundAudio` | `expo-audio` + foreground service | `<audio>` element with in-memory WAV |
 | `notifications` | `expo-notifications` (scheduled) | Web Notifications API + `setTimeout` |
 
@@ -239,7 +239,7 @@ All other code (PlayerContext, SessionContext, SettingsContext, UI components, n
 ## Expo dependencies
 
 - expo-audio — Background audio keepalive + foreground service (native), replaced expo-av
-- expo-speech — Text-to-speech (native only)
+- expo-speech — Text-to-speech fallback (native only, used when Edge TTS audio is unavailable)
 - expo-haptics — Vibration (native only)
 - expo-notifications — Scheduled notifications (native only)
 - expo-keep-awake — Keep screen on
@@ -302,7 +302,7 @@ npx wrangler deploy       # deploys to takt-tts.teanocrata.workers.dev
 - No `account_id` in `wrangler.toml` — it uses whichever account is authenticated via `wrangler login`
 - The Worker is not deployed automatically by CI; changes to `tts-worker/` must be deployed manually
 - The `TRUSTED_CLIENT_TOKEN` and `Sec-MS-GEC` generation mimic the Edge browser's TTS protocol — if Microsoft changes the protocol, the Worker may need updating
-- Native Android does not use this Worker; it uses `expo-speech` directly
+- Native Android also uses this Worker (via GET URLs with `expo-audio` `preload`/`createAudioPlayer`), falling back to `expo-speech` if unavailable
 
 ## Testing on device
 
