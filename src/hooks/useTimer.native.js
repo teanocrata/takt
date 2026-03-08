@@ -95,5 +95,5 @@ export function useTimer({ onTick, onIntervalComplete, onWarning10, onWarning3 }
     return () => clearInterval(timerRef.current);
   }, []);
 
-  return { start, pause, resume, stop, getRemainingMs };
+  return { start, pause, resume, stop, getRemainingMs, tick };
 }

@@ -1,11 +1,22 @@
-import { useRef, useCallback } from 'react';
+import { useRef, useCallback, useEffect } from 'react';
 import { useAudioPlayer, setAudioModeAsync } from 'expo-audio';
 
 const silenceSource = require('../../assets/silence.wav');
 
-export function useBackgroundAudio() {
-  const player = useAudioPlayer(silenceSource);
+export function useBackgroundAudio(onHeartbeat) {
+  const player = useAudioPlayer(silenceSource, { updateInterval: 250 });
   const isActive = useRef(false);
+
+  // Native playback status updates fire even with screen off,
+  // unlike JS setInterval which gets suspended by Android.
+  // Use them as a heartbeat to drive the timer.
+  useEffect(() => {
+    if (!onHeartbeat) return;
+    const sub = player.addListener('playbackStatusUpdate', () => {
+      if (isActive.current) onHeartbeat();
+    });
+    return () => sub.remove();
+  }, [player, onHeartbeat]);
 
   const start = useCallback(async () => {
     if (isActive.current) return;

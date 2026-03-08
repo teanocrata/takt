@@ -15,7 +15,14 @@ export function PlayerProvider({ children }) {
   const { getSession } = useSessions();
   const { announceInterval, warn10Seconds, warn3Seconds, announceComplete, preGenerateTTS } =
     useAlerts();
-  const backgroundAudio = useBackgroundAudio();
+
+  // Heartbeat callback ref — set after timer is created, called by
+  // native audio player status updates to drive the timer in background
+  const heartbeatRef = useRef(null);
+  const heartbeat = useCallback(() => {
+    heartbeatRef.current?.();
+  }, []);
+  const backgroundAudio = useBackgroundAudio(heartbeat);
 
   const [session, setSession] = useState(null);
   const [currentIndex, setCurrentIndex] = useState(0);
@@ -95,6 +102,9 @@ export function PlayerProvider({ children }) {
     onWarning10: warn10Seconds,
     onWarning3: warn3Seconds,
   });
+
+  // Connect the native audio heartbeat to the timer tick
+  heartbeatRef.current = timer.tick;
 
   const startSession = useCallback(
     async (sessionId) => {
