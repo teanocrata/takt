@@ -7,7 +7,7 @@ export async function requestNotificationPermissions() {
       name: 'Intervalos',
       importance: Notifications.AndroidImportance.MAX,
       vibrationPattern: [0, 250, 250, 250],
-      sound: 'default',
+      sound: true,
     });
   }
   return status === 'granted';
@@ -28,7 +28,7 @@ export async function scheduleIntervalNotifications(session) {
         content: {
           title: 'Takt',
           body: nextInterval.name,
-          sound: 'default',
+          sound: true,
           categoryIdentifier: 'takt-intervals',
         },
         trigger: {
@@ -45,7 +45,7 @@ export async function scheduleIntervalNotifications(session) {
     content: {
       title: 'Takt',
       body: 'Sesion completada!',
-      sound: 'default',
+      sound: true,
     },
     trigger: {
       type: Notifications.SchedulableTriggerInputTypes.TIME_INTERVAL,
