@@ -44,6 +44,8 @@ Both platforms deploy automatically on push to `main` via GitHub Actions.
   - Native: `expo-haptics`
   - Web: `navigator.vibrate()`
 - **10-second warning:** Voice says "Diez segundos" and short vibration before each change
+- **3-second warning:** Short vibration only (no voice) before each change
+- **Session complete:** Voice announces "Sesión completada. Buen trabajo." and vibration when session ends (both platforms)
 - **Notifications:** System notification on interval change
   - Native: `expo-notifications` with `TIME_INTERVAL` scheduled triggers
   - Web: Web Notifications API with `setTimeout` scheduling
@@ -56,8 +58,8 @@ The app MUST keep working with screen off, app in background, phone in pocket.
 - `player.setActiveForLockScreen(true)` starts the `AudioControlsService` foreground service — **required** for sustained background playback (without it Android kills the JS thread after ~3 min)
 - `interruptionMode: 'doNotMix'` is required by expo-audio when using `setActiveForLockScreen` (trade-off: other audio apps pause while session is running)
 - `expo-notifications` schedules all interval notifications upfront so they fire even if the process is suspended
-- `setInterval(tick, 250)` in JS main thread for the countdown timer
-- `AppState` listener to force a tick on foreground resume
+- Dual timer mechanism: `setInterval(tick, 250)` in JS main thread + `playbackStatusUpdate` events from the audio player serve as a heartbeat to drive the timer even when Android suspends JS timers in background
+- `AppState` listener for background recovery: on foreground resume, recalculates the entire session position using wall-clock time (`Date.now() - sessionStartTime - pauseAccumulator`), jumping forward through intervals if needed — handles cases where the app was backgrounded for longer than one interval
 
 **Web implementation (works with screen off on Android Chrome):**
 - Web Worker with `setInterval` for un-throttled timer ticks (Chrome throttles main-thread timers in background tabs)
@@ -229,7 +231,7 @@ Metro resolves `.web.js` vs `.native.js` automatically based on the target platf
 
 | Module | Native (`.native.js`) | Web (`.web.js`) |
 |--------|----------------------|-----------------|
-| `useTimer` | `setInterval` + `AppState` listener | Web Worker (un-throttled in background) |
+| `useTimer` | `setInterval` + audio heartbeat + `AppState` recovery | Web Worker (un-throttled in background) |
 | `useAlerts` | Edge TTS via Cloudflare Worker (`expo-audio` preload/play, falls back to `expo-speech`) + `expo-haptics` | Edge TTS via Cloudflare Worker (`fetch` + `<audio>`) + `navigator.vibrate()` |
 | `useBackgroundAudio` | `expo-audio` + foreground service | `<audio>` element with in-memory WAV |
 | `notifications` | `expo-notifications` (scheduled) | Web Notifications API + `setTimeout` |
@@ -271,15 +273,16 @@ Both workflows trigger on push to `main` and on `workflow_dispatch`:
 The Web Speech API (`speechSynthesis`) stops working when the browser tab is backgrounded on Android Chrome. Since Takt must announce intervals with the screen off, we need an alternative. Edge TTS (Microsoft's neural TTS service) produces high-quality audio, but it requires a WebSocket connection with specific headers (`Origin`, `Sec-MS-GEC` token) that browsers cannot send from client-side JS. The Cloudflare Worker acts as a proxy: the browser sends a simple POST request, the Worker opens the WebSocket to Edge TTS and returns the generated MP3.
 
 **How it works:**
-1. At session start, the web client (`src/hooks/useAlerts.web.js`) pre-fetches TTS audio for all interval names by POSTing to the Worker
+1. At session start, both clients pre-fetch TTS audio for all interval names: web (`useAlerts.web.js`) POSTs to the Worker, native (`useAlerts.native.js`) uses `expo-audio` `preload` with GET URLs
 2. The Worker (`tts-worker/worker.js`) connects to `speech.platform.bing.com` via WebSocket, sends SSML, and streams back MP3 chunks
 3. The MP3 is cached in-memory on the client; during playback it's played via `<audio>` element (works in background)
 4. If the Worker is unreachable, falls back to `speechSynthesis` (foreground only)
 
 **Endpoint:**
 - URL: `https://takt-tts.teanocrata.workers.dev/tts`
-- Method: `POST`
-- Body: `{ "text": "Trote de trabajo", "voice": "es-ES-ElviraNeural" }`
+- Supports both GET and POST:
+  - **Web** uses POST with JSON body: `{ "text": "Trote de trabajo", "voice": "es-ES-ElviraNeural" }`
+  - **Native** uses GET with query params: `/tts?text=Trote+de+trabajo&voice=es-ES-ElviraNeural` (for `expo-audio` `preload` compatibility)
 - Response: `audio/mpeg` (MP3)
 - Optional params: `rate` (default `-10%`), `pitch` (default `+0Hz`)
 - CORS: allows all origins
