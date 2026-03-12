@@ -290,11 +290,14 @@ The Web Speech API (`speechSynthesis`) stops working when the browser tab is bac
 **Source code:** `tts-worker/worker.js` + `tts-worker/wrangler.toml`
 
 **Deploying / updating the Worker:**
+- **Automatic:** GitHub Actions workflow (`.github/workflows/deploy-worker.yml`) deploys on push to `main` when `tts-worker/**` files change. Requires two GitHub secrets: `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID`.
+- **Manual from CLI:**
 ```bash
 cd tts-worker
 npx wrangler login        # one-time: authenticates with Cloudflare account
 npx wrangler deploy       # deploys to takt-tts.teanocrata.workers.dev
 ```
+- **Manual from GitHub:** trigger the "Deploy Cloudflare Worker" workflow via `workflow_dispatch`
 
 **Cloudflare dashboard:**
 - Log in at https://dash.cloudflare.com → Workers & Pages → `takt-tts`
@@ -302,8 +305,7 @@ npx wrangler deploy       # deploys to takt-tts.teanocrata.workers.dev
 - The Worker runs on the free tier (100k requests/day)
 
 **Notes:**
-- No `account_id` in `wrangler.toml` — it uses whichever account is authenticated via `wrangler login`
-- The Worker is not deployed automatically by CI; changes to `tts-worker/` must be deployed manually
+- No `account_id` in `wrangler.toml` — in CI it's provided via `CLOUDFLARE_ACCOUNT_ID` secret, locally via `wrangler login`
 - The `TRUSTED_CLIENT_TOKEN` and `Sec-MS-GEC` generation mimic the Edge browser's TTS protocol — if Microsoft changes the protocol, the Worker may need updating
 - Native Android also uses this Worker (via GET URLs with `expo-audio` `preload`/`createAudioPlayer`), falling back to `expo-speech` if unavailable
 
